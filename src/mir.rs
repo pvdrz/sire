@@ -21,7 +21,10 @@ pub enum Place {
 }
 
 #[derive(Clone, Debug)]
-pub struct Constant(pub i32);
+pub enum Constant {
+    Int(i32),
+    Fun(String),
+}
 
 #[derive(Clone, Debug)]
 pub enum Operand {
@@ -42,11 +45,12 @@ pub enum Rvalue {
     // Aggregate(Vec<Operand>)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BinOp {
     Add,
     Sub,
     Gt,
+    Eq,
 }
 
 #[derive(Clone, Debug)]
@@ -63,7 +67,7 @@ pub enum Terminator {
     Return,
     Goto(BlockID),
     SwitchInt(Operand, Vec<Constant>, Vec<BlockID>),
-    // Call(Operand, Vec<Operand>, Option<Place>),
+    Call(Operand, Vec<Operand>, Place, BlockID),
 }
 
 #[derive(Clone, Debug)]

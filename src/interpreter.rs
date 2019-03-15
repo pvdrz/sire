@@ -1,40 +1,82 @@
 use crate::mir::*;
 
-#[derive(Clone, Debug)]
+use std::collections::HashMap;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
     Place(usize),
     Value(i32),
+    Function(String),
+    Apply(Box<Expr>, Vec<Expr>),
     BinaryOp(BinOp, Box<Expr>, Box<Expr>),
     Switch(Box<Expr>, Vec<Expr>, Vec<Expr>),
     Nil,
 }
 
+impl Expr {
+    fn replace(self, target: &Self, substitution: &Self) -> Self {
+        if self == *target {
+            substitution.clone()
+        } else {
+            match self {
+                Expr::Apply(e1, e2) => Expr::Apply(
+                    Box::new(e1.replace(target, substitution)),
+                    e2.into_iter()
+                        .map(|e| e.replace(target, substitution))
+                        .collect(),
+                ),
+                Expr::Switch(e1, e2, e3) => Expr::Switch(
+                    Box::new(e1.replace(target, substitution)),
+                    e2.into_iter()
+                        .map(|e| e.replace(target, substitution))
+                        .collect(),
+                    e3.into_iter()
+                        .map(|e| e.replace(target, substitution))
+                        .collect(),
+                ),
+                Expr::BinaryOp(bin_op, e1, e2) => Expr::BinaryOp(
+                    bin_op,
+                    Box::new(e1.replace(target, substitution)),
+                    Box::new(e2.replace(target, substitution)),
+                ),
+                expr => expr,
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
-struct Frame<'a> {
+struct Frame {
     locals: Vec<usize>,
     block: BlockID,
     statement: StatementID,
-    function: &'a Function,
+    function: String,
 }
 
 #[derive(Clone, Debug)]
-pub struct Interpreter<'a> {
-    stack: Vec<Frame<'a>>,
+pub struct Interpreter {
+    stack: Vec<Frame>,
     state: Vec<Expr>,
+    functions: HashMap<String, Function>,
     result: Expr,
 }
 
-impl<'a> Interpreter<'a> {
+impl<'a> Interpreter {
     pub fn new() -> Self {
         Interpreter {
             stack: Vec::new(),
             state: Vec::new(),
+            functions: HashMap::new(),
             result: Expr::Nil,
         }
     }
 
-    pub fn eval_function(&mut self, function: &'a Function) -> EvalResult<Expr> {
+    pub fn eval_function(&mut self, f_name: &str) -> EvalResult<Expr> {
         let mut locals = Vec::new();
+        let function = self
+            .functions
+            .get(f_name)
+            .ok_or(EvalError::new("Function does not exist"))?;
         for i in 0..function.locals() {
             locals.push(self.state.len());
             if i > 0 && i <= function.args() {
@@ -47,7 +89,7 @@ impl<'a> Interpreter<'a> {
             locals,
             block: BlockID(0),
             statement: StatementID(0),
-            function,
+            function: f_name.to_owned(),
         });
         self.run()?;
         Ok(self.result.clone())
@@ -64,10 +106,13 @@ impl<'a> Interpreter<'a> {
         }
 
         let frame = self.stack.first().expect("Stack is not empty");
-        let block = frame
-            .function
+        let block = self
+            .functions
+            .get(&frame.function)
+            .ok_or(EvalError::new("Function does not exist"))?
             .get_block(&frame.block)
-            .ok_or(EvalError(format!("Block {:?} does not exist", frame.block)))?;
+            .ok_or(EvalError(format!("Block {:?} does not exist", frame.block)))?
+            .clone();
         if block.is_statement(&frame.statement) {
             let statement = block
                 .get_statement(&frame.statement)
@@ -75,7 +120,7 @@ impl<'a> Interpreter<'a> {
                     "Statement {:?} does not exist",
                     frame.statement
                 )))?;
-            self.eval_statement(statement)?;
+            self.eval_statement(statement)?
         } else {
             let terminator = block.get_terminator();
             self.eval_terminator(terminator)?;
@@ -115,19 +160,37 @@ impl<'a> Interpreter<'a> {
                         .stack
                         .first_mut()
                         .ok_or(EvalError::new("Stack is empty"))?;
-                    for (i, Constant(value)) in values.iter().enumerate() {
-                        if val == *value {
-                            frame.block = blocks[i].clone();
-                            frame.statement = StatementID(0);
-                            return Ok(());
+                    for (i, constant) in values.iter().enumerate() {
+                        match constant {
+                            Constant::Int(value) => {
+                                if val == *value {
+                                    frame.block = blocks[i].clone();
+                                    frame.statement = StatementID(0);
+                                    return Ok(());
+                                }
+                            }
+                            _ => {
+                                return Err(EvalError::new(
+                                    "Cannot use function as value for switch",
+                                ))
+                            }
                         }
                     }
                     frame.block = blocks.last().unwrap().clone();
                     frame.statement = StatementID(0);
                 }
                 expr => {
-                    let expr_values: Vec<Expr> =
-                        values.iter().map(|Constant(v)| Expr::Value(*v)).collect();
+                    let mut expr_values: Vec<Expr> = Vec::new();
+                    for constant in values {
+                        match constant {
+                            Constant::Int(value) => expr_values.push(Expr::Value(*value)),
+                            _ => {
+                                return Err(EvalError::new(
+                                    "Cannot use function as value for switch",
+                                ))
+                            }
+                        }
+                    }
                     let expr_blocks: Vec<Expr> = blocks
                         .iter()
                         .map(|block_id| {
@@ -143,6 +206,33 @@ impl<'a> Interpreter<'a> {
                     self.result = Expr::Switch(Box::new(expr), expr_values, expr_blocks);
                 }
             },
+            Terminator::Call(func, args, ret, block_id) => {
+                let locals = &self
+                    .stack
+                    .first()
+                    .ok_or(EvalError::new("Stack is empty"))?
+                    .locals;
+                let address = match ret {
+                    Place::Local(local) => *locals
+                        .get(*local)
+                        .ok_or(EvalError::new("Place is not pointing to a valid local"))?,
+                };
+                let mut expr_args = Vec::new();
+                for arg in args {
+                    expr_args.push(self.eval_operand(arg)?);
+                }
+                *self
+                    .state
+                    .get_mut(address)
+                    .ok_or(EvalError::new("Invalid address"))? =
+                    Expr::Apply(Box::new(self.eval_operand(func)?), expr_args);
+                let frame = self
+                    .stack
+                    .first_mut()
+                    .ok_or(EvalError::new("Stack is empty"))?;
+                frame.block = block_id.clone();
+                frame.statement = StatementID(0);
+            }
         }
         Ok(())
     }
@@ -174,6 +264,13 @@ impl<'a> Interpreter<'a> {
                                 Expr::Value(0)
                             }
                         }
+                        BinOp::Eq => {
+                            if c1 == c2 {
+                                Expr::Value(1)
+                            } else {
+                                Expr::Value(0)
+                            }
+                        }
                     },
                     (e1, e2) => Expr::BinaryOp(bin_op.clone(), Box::new(e1), Box::new(e2)),
                 }
@@ -188,7 +285,10 @@ impl<'a> Interpreter<'a> {
                     .clone()
             }
 
-            Rvalue::Use(Constant(v)) => Expr::Value(*v),
+            Rvalue::Use(constant) => match constant {
+                Constant::Int(v) => Expr::Value(*v),
+                _ => unimplemented!(),
+            },
         };
         *self
             .state
@@ -204,12 +304,19 @@ impl<'a> Interpreter<'a> {
                 .get(*local)
                 .cloned()
                 .unwrap_or(Expr::Place(local.clone())),
-            Operand::Constant(Constant(v)) => Expr::Value(*v),
+            Operand::Constant(constant) => match constant {
+                Constant::Int(v) => Expr::Value(*v),
+                Constant::Fun(f) => Expr::Function(f.clone()),
+            },
         })
     }
 
     pub fn result(&self) -> &Expr {
         &self.result
+    }
+
+    pub fn add_function(&mut self, name: &str, function: Function) {
+        self.functions.insert(name.to_owned(), function);
     }
 }
 
