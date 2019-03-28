@@ -264,6 +264,13 @@ impl<'a> Interpreter {
                                 Expr::Value(0)
                             }
                         }
+                        BinOp::Lt => {
+                            if c1 > c2 {
+                                Expr::Value(1)
+                            } else {
+                                Expr::Value(0)
+                            }
+                        }
                         BinOp::Eq => {
                             if c1 == c2 {
                                 Expr::Value(1)

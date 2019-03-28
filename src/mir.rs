@@ -1,4 +1,4 @@
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BlockID(pub usize);
 
 #[derive(Clone, Debug)]
@@ -50,6 +50,7 @@ pub enum BinOp {
     Add,
     Sub,
     Gt,
+    Lt,
     Eq,
 }
 
