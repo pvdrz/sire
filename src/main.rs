@@ -1,9 +1,11 @@
 mod analysis;
 mod interpreter;
 mod mir;
+mod smt;
 
 use crate::interpreter::*;
 use crate::mir::*;
+use crate::smt::*;
 
 fn main() -> EvalResult {
     // fn largest(a: i32, b: i32) -> i32 {
@@ -272,9 +274,13 @@ fn main() -> EvalResult {
         ],
     );
 
-    // let mut interpreter = Interpreter::new();
-    println!("foo = {:?}", crate::analysis::find_loop(&gauss));
-    // println!("foo = {:?}", interpreter.eval_function("gauss"));
+    let mut interpreter = Interpreter::new();
+    interpreter.add_function("largest", largest);
+    // println!("foo = {:?}", crate::analysis::find_loop(&gauss));
+
+    let largest_expr = interpreter.eval_function("largest")?;
+    println!("largest = {:?}", largest_expr);
+    println!("largest = {:?}", largest_expr.to_smt());
 
     Ok(())
 }
