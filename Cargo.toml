@@ -1,7 +1,8 @@
 [package]
-name = "symbolic-mir"
+name = "sire"
 version = "0.1.0"
 authors = ["Christian Poveda <christianpoveda@protonmail.com>"]
 edition = "2018"
 
 [dependencies]
+rustc-workspace-hack = "1.0.0"
