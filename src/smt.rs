@@ -34,12 +34,18 @@ impl ToSmt for Expr {
 impl ToSmt for BinOp {
     fn to_smt(&self) -> String {
         match self {
-            BinOp::Eq => "=",
-            BinOp::Gt => ">",
-            BinOp::Lt => ">",
             BinOp::Add => "+",
             BinOp::Sub => "-",
-            _ => unimplemented!()
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Rem => "%",
+            BinOp::Eq => "=",
+            BinOp::Lt => ">",
+            BinOp::Le => ">=",
+            BinOp::Ne => "!=",
+            BinOp::Ge => ">=",
+            BinOp::Gt => ">",
+            _ => unimplemented!(),
         }
         .to_owned()
     }
