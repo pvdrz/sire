@@ -39,23 +39,21 @@ impl Callbacks for SireCompilerCalls {
         compiler.session().abort_if_errors();
         compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
             let hir = tcx.hir();
-            let mir_fns = hir
-                .krate()
-                .items
-                .iter()
-                .filter_map(|(node_id, item)| match item.node {
-                    ItemKind::Fn(_, _, _, _) => {
-                        let def_id = hir.local_def_id(*node_id);
-                        let path = tcx.def_path(def_id).to_filename_friendly_no_crate();
-                        let mir = tcx.optimized_mir(def_id);
-                        Some((path, mir))
-                    }
-                    _ => None,
-                })
-                .collect::<HashMap<String, &Mir>>();
-            println!("{:?}", mir_fns);
+            let mut mir_fns = HashMap::new();
+            let mut names = HashMap::new();
 
-            let mut interpreter = Interpreter::new();
+            for (node_id, item) in &hir.krate().items {
+                if let ItemKind::Fn(_, _, _, _) = item.node {
+                    let def_id = hir.local_def_id(*node_id);
+                    let name = tcx.def_path(def_id).to_filename_friendly_no_crate();
+                    let mir = tcx.optimized_mir(def_id);
+                    mir_fns.insert(name.clone(), mir);
+                    names.insert(def_id, name);
+                }
+            }
+            println!("{:?}", mir_fns["foo"].basic_blocks());
+
+            let mut interpreter = Interpreter::new(names);
             let result = interpreter.eval_mir(mir_fns.get("foo").unwrap());
 
             println!("foo = {:?}", result);

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
+use rustc::hir::def_id::DefId;
 use rustc::mir::interpret::ConstValue;
 use rustc::mir::*;
+use rustc::ty::TyKind;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
@@ -20,20 +22,26 @@ pub struct Interpreter<'tcx> {
     block: Option<BasicBlock>,
     statement: usize,
     memory: HashMap<Place<'tcx>, Expr>,
+    names: HashMap<DefId, String>,
 }
 
 impl<'tcx> Interpreter<'tcx> {
-    pub fn new() -> Self {
+    pub fn new(names: HashMap<DefId, String>) -> Self {
         Interpreter {
             mir: None,
             block: None,
             statement: 0,
             memory: HashMap::new(),
+            names,
         }
     }
 
     pub fn eval_mir(&mut self, mir: &'tcx Mir<'tcx>) -> EvalResult<Expr> {
-        for i in 0usize..mir.arg_count + 1 {
+        self.memory.insert(
+            Place::Base(PlaceBase::Local(Local::from_usize(0))),
+            Expr::Nil,
+        );
+        for i in 1usize..mir.arg_count + 1 {
             self.memory.insert(
                 Place::Base(PlaceBase::Local(Local::from_usize(i))),
                 Expr::Place(i),
@@ -92,6 +100,7 @@ impl<'tcx> Interpreter<'tcx> {
             TerminatorKind::Return => Ok(false),
             TerminatorKind::Goto { target } => {
                 self.block = Some(target);
+                self.statement = 0;
                 Ok(true)
             }
             TerminatorKind::Call {
@@ -99,22 +108,21 @@ impl<'tcx> Interpreter<'tcx> {
                 ref args,
                 ref destination,
                 ..
-            } => {
-                match destination {
-                    Some((place, block)) => {
-                        let func_expr = self.eval_operand(func)?;
-                        let mut args_expr = Vec::new();
-                        for op in args {
-                            args_expr.push(self.eval_operand(op)?);
-                        }
-                        self.memory
-                            .insert(place.clone(), Expr::Apply(Box::new(func_expr), args_expr));
-                        self.block = Some(*block);
+            } => match destination {
+                Some((place, block)) => {
+                    let func_expr = self.eval_operand(func)?;
+                    let mut args_expr = Vec::new();
+                    for op in args {
+                        args_expr.push(self.eval_operand(op)?);
                     }
-                    None => unimplemented!(),
+                    *self.memory.get_mut(place).expect("Memory should be some.") =
+                        Expr::Apply(Box::new(func_expr), args_expr);
+                    self.block = Some(*block);
+                    self.statement = 0;
+                    Ok(true)
                 }
-                Ok(true)
-            }
+                None => unimplemented!(),
+            },
             _ => unimplemented!(),
         }
     }
@@ -147,8 +155,19 @@ impl<'tcx> Interpreter<'tcx> {
                 .expect("Place in operand should be some.")
                 .clone(),
 
-            Operand::Constant(constant) => match constant.literal.val {
-                ConstValue::Scalar(scalar) => Expr::Value(scalar.to_i32().unwrap()),
+            Operand::Constant(constant) => match constant.ty.sty {
+                // TyKind::Bool => {},
+                TyKind::Int(_) => match constant.literal.val {
+                    ConstValue::Scalar(scalar) => Expr::Value(scalar.to_i32().unwrap()),
+                    _ => unimplemented!(),
+                },
+                // TyKind::Uint(_) => {},
+                TyKind::FnDef(ref def_id, _) => Expr::Function(
+                    self.names
+                        .get(def_id)
+                        .expect("DefId should be some.")
+                        .clone(),
+                ),
                 _ => unimplemented!(),
             },
             _ => unimplemented!(),
