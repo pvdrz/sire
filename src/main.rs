@@ -3,6 +3,11 @@
 extern crate rustc;
 extern crate rustc_driver;
 extern crate rustc_interface;
+extern crate syntax;
+
+mod interpreter;
+
+use crate::interpreter::Interpreter;
 
 use std::collections::HashMap;
 
@@ -49,6 +54,11 @@ impl Callbacks for SireCompilerCalls {
                 })
                 .collect::<HashMap<String, &Mir>>();
             println!("{:?}", mir_fns);
+
+            let mut interpreter = Interpreter::new();
+            let result = interpreter.eval_mir(mir_fns.get("foo").unwrap());
+
+            println!("foo = {:?}", result);
         });
 
         compiler.session().abort_if_errors();

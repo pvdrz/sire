@@ -1,6 +1,7 @@
-use crate::mir::*;
-
 use std::collections::HashMap;
+
+use rustc::mir::interpret::ConstValue;
+use rustc::mir::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
@@ -13,86 +14,40 @@ pub enum Expr {
     Nil,
 }
 
-impl Expr {
-    fn replace(self, target: &Self, substitution: &Self) -> Self {
-        if self == *target {
-            substitution.clone()
-        } else {
-            match self {
-                Expr::Apply(e1, e2) => Expr::Apply(
-                    Box::new(e1.replace(target, substitution)),
-                    e2.into_iter()
-                        .map(|e| e.replace(target, substitution))
-                        .collect(),
-                ),
-                Expr::Switch(e1, e2, e3) => Expr::Switch(
-                    Box::new(e1.replace(target, substitution)),
-                    e2.into_iter()
-                        .map(|e| e.replace(target, substitution))
-                        .collect(),
-                    e3.into_iter()
-                        .map(|e| e.replace(target, substitution))
-                        .collect(),
-                ),
-                Expr::BinaryOp(bin_op, e1, e2) => Expr::BinaryOp(
-                    bin_op,
-                    Box::new(e1.replace(target, substitution)),
-                    Box::new(e2.replace(target, substitution)),
-                ),
-                expr => expr,
-            }
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
-struct Frame {
-    locals: Vec<usize>,
-    block: BlockID,
-    statement: StatementID,
-    function: String,
+pub struct Interpreter<'tcx> {
+    mir: Option<&'tcx Mir<'tcx>>,
+    block: Option<BasicBlock>,
+    statement: usize,
+    memory: HashMap<Place<'tcx>, Expr>,
 }
 
-#[derive(Clone, Debug)]
-pub struct Interpreter {
-    stack: Vec<Frame>,
-    state: Vec<Expr>,
-    functions: HashMap<String, Function>,
-    result: Expr,
-}
-
-impl<'a> Interpreter {
+impl<'tcx> Interpreter<'tcx> {
     pub fn new() -> Self {
         Interpreter {
-            stack: Vec::new(),
-            state: Vec::new(),
-            functions: HashMap::new(),
-            result: Expr::Nil,
+            mir: None,
+            block: None,
+            statement: 0,
+            memory: HashMap::new(),
         }
     }
 
-    pub fn eval_function(&mut self, f_name: &str) -> EvalResult<Expr> {
-        let mut locals = Vec::new();
-        let function = self
-            .functions
-            .get(f_name)
-            .ok_or(EvalError::new("Function does not exist"))?;
-        for i in 0..function.locals() {
-            locals.push(self.state.len());
-            if i > 0 && i <= function.args() {
-                self.state.push(Expr::Place(i));
-            } else {
-                self.state.push(Expr::Nil);
-            }
+    pub fn eval_mir(&mut self, mir: &'tcx Mir<'tcx>) -> EvalResult<Expr> {
+        for i in 0usize..mir.arg_count + 1 {
+            self.memory.insert(
+                Place::Base(PlaceBase::Local(Local::from_usize(i))),
+                Expr::Place(i),
+            );
         }
-        self.stack.push(Frame {
-            locals,
-            block: BlockID(0),
-            statement: StatementID(0),
-            function: f_name.to_owned(),
-        });
+
+        self.mir = Some(mir);
+        self.block = Some(BasicBlock::from_u32(0));
         self.run()?;
-        Ok(self.result.clone())
+        Ok(self
+            .memory
+            .get(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
+            .unwrap()
+            .clone())
     }
 
     pub fn run(&mut self) -> EvalResult {
@@ -100,230 +55,104 @@ impl<'a> Interpreter {
         Ok(())
     }
 
-    pub fn step(&mut self) -> EvalResult<bool> {
-        if self.stack.is_empty() {
-            return Ok(false);
-        }
+    fn step(&mut self) -> EvalResult<bool> {
+        let block_data = self
+            .mir
+            .expect("MIR should be some.")
+            .basic_blocks()
+            .get(self.block.expect("Block should be some."))
+            .expect("BlockData should be some.");
 
-        let frame = self.stack.first().expect("Stack is not empty");
-        let block = self
-            .functions
-            .get(&frame.function)
-            .ok_or(EvalError::new("Function does not exist"))?
-            .get_block(&frame.block)
-            .ok_or(EvalError(format!("Block {:?} does not exist", frame.block)))?
-            .clone();
-        if block.is_statement(&frame.statement) {
-            let statement = block
-                .get_statement(&frame.statement)
-                .ok_or(EvalError(format!(
-                    "Statement {:?} does not exist",
-                    frame.statement
-                )))?;
-            self.eval_statement(statement)?
-        } else {
-            let terminator = block.get_terminator();
-            self.eval_terminator(terminator)?;
+        match block_data.statements.get(self.statement) {
+            Some(statement) => self.eval_statement(statement),
+            None => self.eval_terminator(block_data.terminator()),
         }
+    }
+
+    fn eval_statement(&mut self, statement: &Statement<'tcx>) -> EvalResult<bool> {
+        match statement.kind {
+            StatementKind::Assign(ref place, ref rvalue) => {
+                self.eval_rvalue_into_place(rvalue, place)?;
+            }
+            StatementKind::StorageLive(local) => {
+                self.memory
+                    .insert(Place::Base(PlaceBase::Local(local)), Expr::Nil);
+            }
+            StatementKind::StorageDead(local) => {
+                self.memory.remove(&Place::Base(PlaceBase::Local(local)));
+            }
+            _ => unimplemented!(),
+        };
+        self.statement += 1;
         Ok(true)
     }
 
-    fn eval_statement(&mut self, statement: &Statement) -> EvalResult {
-        match statement {
-            Statement::Assign(place, rvalue) => self.eval_rvalue_to_place(rvalue, place)?,
-        };
-        self.stack
-            .first_mut()
-            .ok_or(EvalError::new("Stack is empty"))?
-            .statement
-            .grow();
-        Ok(())
-    }
-
-    fn eval_terminator(&mut self, terminator: &Terminator) -> EvalResult {
-        match terminator {
-            Terminator::Return => {
-                let frame = self.stack.pop().ok_or(EvalError::new("Stack is empty"))?;
-                self.result = self.state[frame.locals[0]].clone();
+    fn eval_terminator(&mut self, terminator: &Terminator<'tcx>) -> EvalResult<bool> {
+        match terminator.kind {
+            TerminatorKind::Return => Ok(false),
+            TerminatorKind::Goto { target } => {
+                self.block = Some(target);
+                Ok(true)
             }
-            Terminator::Goto(block_id) => {
-                let frame = self
-                    .stack
-                    .first_mut()
-                    .ok_or(EvalError::new("Stack is empty"))?;
-                frame.block = block_id.clone();
-                frame.statement = StatementID(0);
-            }
-            Terminator::SwitchInt(op, values, blocks) => match self.eval_operand(op)? {
-                Expr::Value(val) => {
-                    let frame = self
-                        .stack
-                        .first_mut()
-                        .ok_or(EvalError::new("Stack is empty"))?;
-                    for (i, constant) in values.iter().enumerate() {
-                        match constant {
-                            Constant::Int(value) => {
-                                if val == *value {
-                                    frame.block = blocks[i].clone();
-                                    frame.statement = StatementID(0);
-                                    return Ok(());
-                                }
-                            }
-                            _ => {
-                                return Err(EvalError::new(
-                                    "Cannot use function as value for switch",
-                                ))
-                            }
+            TerminatorKind::Call {
+                ref func,
+                ref args,
+                ref destination,
+                ..
+            } => {
+                match destination {
+                    Some((place, block)) => {
+                        let func_expr = self.eval_operand(func)?;
+                        let mut args_expr = Vec::new();
+                        for op in args {
+                            args_expr.push(self.eval_operand(op)?);
                         }
+                        self.memory
+                            .insert(place.clone(), Expr::Apply(Box::new(func_expr), args_expr));
+                        self.block = Some(*block);
                     }
-                    frame.block = blocks.last().unwrap().clone();
-                    frame.statement = StatementID(0);
+                    None => unimplemented!(),
                 }
-                expr => {
-                    let mut expr_values: Vec<Expr> = Vec::new();
-                    for constant in values {
-                        match constant {
-                            Constant::Int(value) => expr_values.push(Expr::Value(*value)),
-                            _ => {
-                                return Err(EvalError::new(
-                                    "Cannot use function as value for switch",
-                                ))
-                            }
-                        }
-                    }
-                    let expr_blocks: Vec<Expr> = blocks
-                        .iter()
-                        .map(|block_id| {
-                            let mut interp = self.clone();
-                            let frame = interp.stack.first_mut().unwrap();
-                            frame.block = block_id.clone();
-                            frame.statement = StatementID(0);
-                            interp.run().unwrap();
-                            interp.result
-                        })
-                        .collect();
-                    self.stack.pop().ok_or(EvalError::new("Stack is empty"))?;
-                    self.result = Expr::Switch(Box::new(expr), expr_values, expr_blocks);
-                }
-            },
-            Terminator::Call(func, args, ret, block_id) => {
-                let locals = &self
-                    .stack
-                    .first()
-                    .ok_or(EvalError::new("Stack is empty"))?
-                    .locals;
-                let address = match ret {
-                    Place::Local(local) => *locals
-                        .get(*local)
-                        .ok_or(EvalError::new("Place is not pointing to a valid local"))?,
-                };
-                let mut expr_args = Vec::new();
-                for arg in args {
-                    expr_args.push(self.eval_operand(arg)?);
-                }
-                *self
-                    .state
-                    .get_mut(address)
-                    .ok_or(EvalError::new("Invalid address"))? =
-                    Expr::Apply(Box::new(self.eval_operand(func)?), expr_args);
-                let frame = self
-                    .stack
-                    .first_mut()
-                    .ok_or(EvalError::new("Stack is empty"))?;
-                frame.block = block_id.clone();
-                frame.statement = StatementID(0);
+                Ok(true)
             }
+            _ => unimplemented!(),
         }
-        Ok(())
     }
 
-    fn eval_rvalue_to_place(&mut self, rvalue: &Rvalue, place: &Place) -> EvalResult {
-        let locals = &self
-            .stack
-            .first()
-            .ok_or(EvalError::new("Stack is empty"))?
-            .locals;
-        let address = match place {
-            Place::Local(local) => *locals
-                .get(*local)
-                .ok_or(EvalError::new("Place is not pointing to a valid local"))?,
-        };
-
+    fn eval_rvalue_into_place(&mut self, rvalue: &Rvalue<'tcx>, place: &Place<'tcx>) -> EvalResult {
         let value = match rvalue {
-            Rvalue::BinaryOp(bin_op, op1, op2) => {
-                let e1 = self.eval_operand(op1)?;
-                let e2 = self.eval_operand(op2)?;
-                match (e1, e2) {
-                    (Expr::Value(c1), Expr::Value(c2)) => match bin_op {
-                        BinOp::Add => Expr::Value(c1 + c2),
-                        BinOp::Sub => Expr::Value(c1 - c2),
-                        BinOp::Gt => {
-                            if c1 > c2 {
-                                Expr::Value(1)
-                            } else {
-                                Expr::Value(0)
-                            }
-                        }
-                        BinOp::Lt => {
-                            if c1 > c2 {
-                                Expr::Value(1)
-                            } else {
-                                Expr::Value(0)
-                            }
-                        }
-                        BinOp::Eq => {
-                            if c1 == c2 {
-                                Expr::Value(1)
-                            } else {
-                                Expr::Value(0)
-                            }
-                        }
-                    },
-                    (e1, e2) => Expr::BinaryOp(bin_op.clone(), Box::new(e1), Box::new(e2)),
-                }
-            }
-            Rvalue::Ref(Place::Local(local)) => {
-                let address = *locals
-                    .get(*local)
-                    .ok_or(EvalError::new("Place is not pointing to a valid local"))?;
-                self.state
-                    .get(address)
-                    .ok_or(EvalError::new("Invalid address"))?
-                    .clone()
-            }
-
-            Rvalue::Use(constant) => match constant {
-                Constant::Int(v) => Expr::Value(*v),
-                _ => unimplemented!(),
-            },
+            Rvalue::BinaryOp(bin_op, op1, op2) => Expr::BinaryOp(
+                *bin_op,
+                Box::new(self.eval_operand(op1)?),
+                Box::new(self.eval_operand(op2)?),
+            ),
+            Rvalue::Ref(_, BorrowKind::Shared, place) => self
+                .memory
+                .get(place)
+                .expect("Reference should be some.")
+                .clone(),
+            Rvalue::Use(op) => self.eval_operand(op)?,
+            _ => unimplemented!(),
         };
-        *self
-            .state
-            .get_mut(address)
-            .ok_or(EvalError::new("Invalid address"))? = value;
+
+        *self.memory.get_mut(place).expect("Place should be some.") = value;
         Ok(())
     }
 
     fn eval_operand(&self, operand: &Operand) -> EvalResult<Expr> {
         Ok(match operand {
-            Operand::Move(Place::Local(local)) => self
-                .state
-                .get(*local)
-                .cloned()
-                .unwrap_or(Expr::Place(local.clone())),
-            Operand::Constant(constant) => match constant {
-                Constant::Int(v) => Expr::Value(*v),
-                Constant::Fun(f) => Expr::Function(f.clone()),
+            Operand::Move(place) | Operand::Copy(place) => self
+                .memory
+                .get(place)
+                .expect("Place in operand should be some.")
+                .clone(),
+
+            Operand::Constant(constant) => match constant.literal.val {
+                ConstValue::Scalar(scalar) => Expr::Value(scalar.to_i32().unwrap()),
+                _ => unimplemented!(),
             },
+            _ => unimplemented!(),
         })
-    }
-
-    pub fn result(&self) -> &Expr {
-        &self.result
-    }
-
-    pub fn add_function(&mut self, name: &str, function: Function) {
-        self.functions.insert(name.to_owned(), function);
     }
 }
 
