@@ -4,11 +4,14 @@ use rustc::hir::def_id::DefId;
 use rustc::mir::interpret::ConstValue;
 use rustc::mir::*;
 use rustc::ty::TyKind;
+use syntax::ast::{UintTy, IntTy};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
     Place(usize),
-    Value(i32),
+    Int(i64),
+    Nat(u64),
+    Bool(bool),
     Function(String),
     Apply(Box<Expr>, Vec<Expr>),
     BinaryOp(BinOp, Box<Expr>, Box<Expr>),
@@ -156,12 +159,19 @@ impl<'tcx> Interpreter<'tcx> {
                 .clone(),
 
             Operand::Constant(constant) => match constant.ty.sty {
-                // TyKind::Bool => {},
-                TyKind::Int(_) => match constant.literal.val {
-                    ConstValue::Scalar(scalar) => Expr::Value(scalar.to_i32().unwrap()),
+                TyKind::Bool => match constant.literal.val {
+                    ConstValue::Scalar(scalar) => Expr::Bool(scalar.to_bool().unwrap()),
                     _ => unimplemented!(),
                 },
-                // TyKind::Uint(_) => {},
+                TyKind::Int(IntTy::I64) => match constant.literal.val {
+                    ConstValue::Scalar(scalar) => Expr::Int(scalar.to_i64().unwrap()),
+                    _ => unimplemented!(),
+                },
+                TyKind::Uint(UintTy::U64) => 
+                match constant.literal.val {
+                    ConstValue::Scalar(scalar) => Expr::Nat(scalar.to_u64().unwrap()),
+                    _ => unimplemented!(),
+                },
                 TyKind::FnDef(ref def_id, _) => Expr::Function(
                     self.names
                         .get(def_id)
