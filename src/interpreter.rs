@@ -4,7 +4,7 @@ use rustc::hir::def_id::DefId;
 use rustc::mir::interpret::ConstValue;
 use rustc::mir::*;
 use rustc::ty::TyKind;
-use syntax::ast::{UintTy, IntTy};
+use syntax::ast::{IntTy, UintTy};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
@@ -126,6 +126,43 @@ impl<'tcx> Interpreter<'tcx> {
                 }
                 None => unimplemented!(),
             },
+            TerminatorKind::SwitchInt {
+                ref discr,
+                ref switch_ty,
+                ref values,
+                ref targets,
+                ..
+            } => {
+                let discr_expr = self.eval_operand(&discr)?;
+                let values_expr = values
+                    .iter()
+                    .map(|&bytes| match switch_ty.sty {
+                        TyKind::Bool => Expr::Bool(bytes != 0),
+                        TyKind::Int(IntTy::I64) => Expr::Int(bytes as i64),
+                        TyKind::Uint(UintTy::U64) => Expr::Nat(bytes as u64),
+                        _ => unimplemented!(),
+                    })
+                    .collect::<Vec<_>>();
+                let targets_expr = targets
+                    .iter()
+                    .map(|block| {
+                        let mut interpreter = self.clone();
+                        interpreter.block = Some(*block);
+                        interpreter.statement = 0;
+                        interpreter.run().unwrap();
+                        interpreter
+                            .memory
+                            .get(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
+                            .unwrap()
+                            .clone()
+                    })
+                    .collect::<Vec<_>>();
+                *self
+                    .memory
+                    .get_mut(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
+                    .unwrap() = Expr::Switch(Box::new(discr_expr), values_expr, targets_expr);
+                Ok(false)
+            }
             _ => unimplemented!(),
         }
     }
@@ -167,8 +204,7 @@ impl<'tcx> Interpreter<'tcx> {
                     ConstValue::Scalar(scalar) => Expr::Int(scalar.to_i64().unwrap()),
                     _ => unimplemented!(),
                 },
-                TyKind::Uint(UintTy::U64) => 
-                match constant.literal.val {
+                TyKind::Uint(UintTy::U64) => match constant.literal.val {
                     ConstValue::Scalar(scalar) => Expr::Nat(scalar.to_u64().unwrap()),
                     _ => unimplemented!(),
                 },
