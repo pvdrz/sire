@@ -1,14 +1,16 @@
-use crate::mir::BinOp;
-use crate::Expr;
+use crate::interpreter::Expr;
+use rustc::mir::BinOp;
 
-pub trait ToSMT {
+pub trait ToSmt {
     fn to_smt(&self) -> String;
 }
-impl ToSMT for Expr {
+impl ToSmt for Expr {
     fn to_smt(&self) -> String {
         match self {
             Expr::Function(fun) => fun.clone(),
-            Expr::Value(value) => value.to_string(),
+            Expr::Int(value) => value.to_string(),
+            Expr::Nat(value) => value.to_string(),
+            Expr::Bool(value) => value.to_string(),
             Expr::Place(id) => format!("x{}", id),
             Expr::BinaryOp(op, e1, e2) => {
                 format!("({} {} {})", op.to_smt(), e1.to_smt(), e2.to_smt())
@@ -29,7 +31,7 @@ impl ToSMT for Expr {
     }
 }
 
-impl ToSMT for BinOp {
+impl ToSmt for BinOp {
     fn to_smt(&self) -> String {
         match self {
             BinOp::Eq => "=",
@@ -37,6 +39,7 @@ impl ToSMT for BinOp {
             BinOp::Lt => ">",
             BinOp::Add => "+",
             BinOp::Sub => "-",
+            _ => unimplemented!()
         }
         .to_owned()
     }

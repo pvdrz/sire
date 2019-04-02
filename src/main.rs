@@ -6,13 +6,14 @@ extern crate rustc_interface;
 extern crate syntax;
 
 mod interpreter;
+mod smt;
 
 use crate::interpreter::Interpreter;
+use crate::smt::ToSmt;
 
 use std::collections::HashMap;
 
 use rustc::hir::ItemKind;
-use rustc::mir::Mir;
 use rustc_driver::{report_ices_to_stderr_if_any, run_compiler, Callbacks};
 use rustc_interface::interface;
 
@@ -51,12 +52,16 @@ impl Callbacks for SireCompilerCalls {
                     names.insert(def_id, name);
                 }
             }
-            println!("{:?}", mir_fns["foo"].basic_blocks());
 
             let mut interpreter = Interpreter::new(names);
-            let result = interpreter.eval_mir(mir_fns.get("foo").unwrap());
 
-            println!("foo = {:?}", result);
+            for (name, mir) in mir_fns {
+                // It should be better to use IDs...
+                if name != "main" {
+                    let result = interpreter.eval_mir(mir);
+                    println!("{} = {:?}", name, result.map(|e| e.to_smt()).unwrap());
+                }
+            }
         });
 
         compiler.session().abort_if_errors();
