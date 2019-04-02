@@ -216,7 +216,6 @@ impl<'tcx> Interpreter<'tcx> {
                 ),
                 _ => unimplemented!(),
             },
-            _ => unimplemented!(),
         })
     }
 }
