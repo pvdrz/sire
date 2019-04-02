@@ -44,6 +44,7 @@ impl<'tcx> Interpreter<'tcx> {
             Place::Base(PlaceBase::Local(Local::from_usize(0))),
             Expr::Nil,
         );
+
         for i in 1usize..mir.arg_count + 1 {
             self.memory.insert(
                 Place::Base(PlaceBase::Local(Local::from_usize(i))),
@@ -54,9 +55,14 @@ impl<'tcx> Interpreter<'tcx> {
         self.mir = Some(mir);
         self.block = Some(BasicBlock::from_u32(0));
         self.run()?;
+        for i in 1usize..mir.arg_count + 1 {
+            self.memory
+                .remove(&Place::Base(PlaceBase::Local(Local::from_usize(i))));
+        }
+
         Ok(self
             .memory
-            .get(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
+            .remove(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
             .unwrap()
             .clone())
     }
@@ -100,7 +106,11 @@ impl<'tcx> Interpreter<'tcx> {
 
     fn eval_terminator(&mut self, terminator: &Terminator<'tcx>) -> EvalResult<bool> {
         match terminator.kind {
-            TerminatorKind::Return => Ok(false),
+            TerminatorKind::Return => {
+                self.block = None;
+                self.statement = 0;
+                Ok(false)
+            }
             TerminatorKind::Goto { target } => {
                 self.block = Some(target);
                 self.statement = 0;
@@ -157,10 +167,15 @@ impl<'tcx> Interpreter<'tcx> {
                             .clone()
                     })
                     .collect::<Vec<_>>();
-                *self
-                    .memory
-                    .get_mut(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
-                    .unwrap() = Expr::Switch(Box::new(discr_expr), values_expr, targets_expr);
+
+                self.memory.clear();
+                self.memory.insert(
+                    Place::Base(PlaceBase::Local(Local::from_u32(0))),
+                    Expr::Switch(Box::new(discr_expr), values_expr, targets_expr),
+                );
+
+                self.block = None;
+                self.statement = 0;
                 Ok(false)
             }
             _ => unimplemented!(),
