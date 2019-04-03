@@ -10,12 +10,14 @@ fn main() {
 
 }
 
-fn fact(n: u64) -> u64 {
-    if n == 0 {
-        1
+fn sum(n: i64, m: i64) -> i64 {
+    if m > 0 {
+        sum(n + 1, m - 1)
+    } else if m < 0 {
+        sum(n - 1, m + 1)
     } else {
-        n * fact(n - 1)
-    }
+        n
+    } 
 }
 ```
 you can evaluate it cloning this repo and running
@@ -24,10 +26,10 @@ $ cargo run some_code.rs -C opt-level=3
 ```
 then Sire should print something like 
 ```
-(declare-fun fib (Int) Int)
-(assert (forall ((x1 Int)) (= (fib x1) (ite (>= x1 1) 1 (+ (fib (- x1 1)) (fib (- x1 2)))))))
+(declare-fun sum (Int Int) Int)
+(assert (forall ((x1 Int) (x2 Int)) (= (sum x1 x2) (ite (> x2 0) (sum (+ x1 1) (- x2 1)) (ite (< x2 0) (sum (- x1 1) (+ x2 1)) x1)))))
 ```
-Such expressions can be used to reason about the `fact` function using [z3](https://github.com/Z3Prover/z3) for example.
+Then you can use this code to reason about the `sum` function using [z3](https://rise4fun.com/Z3/F0Qk) for example.
 
 ## Coverage
 
