@@ -6,11 +6,26 @@ use rustc::mir::*;
 use rustc::ty::TyKind;
 use syntax::ast::{IntTy, UintTy};
 
+#[derive(Debug)]
+pub enum Ty {
+    Int,
+    Uint,
+    Bool,
+}
+
+#[derive(Debug)]
+pub struct Function {
+    pub name: String,
+    pub args_ty: Vec<Ty>,
+    pub ret_ty: Ty,
+    pub body: Expr,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
     Place(usize),
     Int(i64),
-    Nat(u64),
+    Uint(u64),
     Bool(bool),
     Function(String),
     Apply(Box<Expr>, Vec<Expr>),
@@ -39,7 +54,21 @@ impl<'tcx> Interpreter<'tcx> {
         }
     }
 
-    pub fn eval_mir(&mut self, mir: &'tcx Mir<'tcx>) -> EvalResult<Expr> {
+    pub fn eval_mir(&mut self, mir: &'tcx Mir<'tcx>, name: String) -> EvalResult<Function> {
+        let mut args_ty = mir
+            .local_decls
+            .iter()
+            .take(mir.arg_count + 1)
+            .map(|local_decl| match local_decl.ty.sty {
+                TyKind::Bool => Ty::Bool,
+                TyKind::Int(IntTy::I64) => Ty::Int,
+                TyKind::Uint(UintTy::U64) => Ty::Uint,
+                _ => unimplemented!(),
+            })
+            .collect::<Vec<_>>();
+
+        let ret_ty = args_ty.pop().unwrap();
+
         self.memory.insert(
             Place::Base(PlaceBase::Local(Local::from_usize(0))),
             Expr::Nil,
@@ -59,12 +88,18 @@ impl<'tcx> Interpreter<'tcx> {
             self.memory
                 .remove(&Place::Base(PlaceBase::Local(Local::from_usize(i))));
         }
-
-        Ok(self
+        let body = self
             .memory
             .remove(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
             .unwrap()
-            .clone())
+            .clone();
+
+        Ok(Function {
+            name,
+            args_ty,
+            ret_ty,
+            body,
+        })
     }
 
     pub fn run(&mut self) -> EvalResult {
@@ -149,7 +184,7 @@ impl<'tcx> Interpreter<'tcx> {
                     .map(|&bytes| match switch_ty.sty {
                         TyKind::Bool => Expr::Bool(bytes != 0),
                         TyKind::Int(IntTy::I64) => Expr::Int(bytes as i64),
-                        TyKind::Uint(UintTy::U64) => Expr::Nat(bytes as u64),
+                        TyKind::Uint(UintTy::U64) => Expr::Uint(bytes as u64),
                         _ => unimplemented!(),
                     })
                     .collect::<Vec<_>>();
@@ -220,7 +255,7 @@ impl<'tcx> Interpreter<'tcx> {
                     _ => unimplemented!(),
                 },
                 TyKind::Uint(UintTy::U64) => match constant.literal.val {
-                    ConstValue::Scalar(scalar) => Expr::Nat(scalar.to_u64().unwrap()),
+                    ConstValue::Scalar(scalar) => Expr::Uint(scalar.to_u64().unwrap()),
                     _ => unimplemented!(),
                 },
                 TyKind::FnDef(ref def_id, _) => Expr::Function(

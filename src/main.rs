@@ -58,8 +58,8 @@ impl Callbacks for SireCompilerCalls {
             for (name, mir) in mir_fns {
                 // It should be better to use IDs...
                 if name != "main" {
-                    let result = interpreter.eval_mir(mir);
-                    println!("{} = {:?}", name, result.map(|e| e.to_smt()).unwrap());
+                    let result = interpreter.eval_mir(mir, name);
+                    println!("{}", result.unwrap().to_smt());
                 }
             }
         });
