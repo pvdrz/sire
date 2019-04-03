@@ -6,6 +6,10 @@ Sire (which is a WIP) intends to be an small symbolic evaluator for Rust's MIR.
 Sire takes the optimized MIR of your code and evaluates its functions into small [expressions](https://github.com/christianpoveda/sire/blob/8b8a9f94398ac68b3b2b2b902c7980b3f0d7e647/src/interpreter.rs#L10). It also allows to export such expressions to the [smt-lib](http://smtlib.cs.uiowa.edu/) language, then you can reason more about them using a theorem prover.
 So for example if you have a file `some_code.rs` containing:
 ```rust
+fn main() {
+
+}
+
 fn fact(n: u64) -> u64 {
     if n == 0 {
         1
@@ -20,7 +24,8 @@ $ cargo run some_code.rs -C opt-level=3
 ```
 then Sire should print something like 
 ```
-fact = (ite (= x1 0) 1 (* x1 (fact (- x1 1))))
+(declare-fun fib (Int) Int)
+(assert (forall ((x1 Int)) (= (fib x1) (ite (>= x1 1) 1 (+ (fib (- x1 1)) (fib (- x1 2)))))))
 ```
 Such expressions can be used to reason about the `fact` function using [z3](https://github.com/Z3Prover/z3) for example.
 
