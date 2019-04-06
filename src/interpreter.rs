@@ -40,6 +40,53 @@ pub enum Expr {
     Nil,
 }
 
+impl Expr {
+    fn replace(&mut self, target: &Self, substitution: &Self) {
+        if *self == *target {
+            *self = substitution.clone();
+        } else {
+            match self {
+                Expr::Apply(e1, e2) => {
+                    e1.replace(target, substitution);
+                    for e in e2 {
+                        e.replace(target, substitution);
+                    }
+                }
+                Expr::Switch(e1, e2, e3) => {
+                    e1.replace(target, substitution);
+                    for e in e2 {
+                        e.replace(target, substitution);
+                    }
+                    for e in e3 {
+                        e.replace(target, substitution);
+                    }
+                }
+                Expr::BinaryOp(_, e1, e2) => {
+                    e1.replace(target, substitution);
+                    e2.replace(target, substitution);
+                }
+                _ => (),
+            }
+        }
+    }
+
+    pub fn ty(&self) -> Ty {
+        match self {
+            Expr::Value(value) => value.ty(),
+            Expr::Apply(e1, _) => match e1.ty() {
+                Ty::Func(tys) => tys.first().unwrap().clone(),
+                _ => unreachable!(),
+            },
+            Expr::BinaryOp(op, e1, _) => match op {
+                BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => Ty::Bool,
+                _ => e1.ty(),
+            },
+            Expr::Switch(_, _, es) => es.first().unwrap().ty().clone(),
+            Expr::Nil => unreachable!(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Value {
     Arg(usize, Ty),
@@ -55,24 +102,6 @@ impl Value {
             Value::Function(_, ty) => ty,
         }
         .clone()
-    }
-}
-
-impl Expr {
-    pub fn ty(&self) -> Ty {
-        match self {
-            Expr::Value(value) => value.ty(),
-            Expr::Apply(e1, _) => match e1.ty() {
-                Ty::Func(tys) => tys.first().unwrap().clone(),
-                _ => unreachable!(),
-            },
-            Expr::BinaryOp(op, e1, _) => match op {
-                BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => Ty::Bool,
-                _ => e1.ty(),
-            },
-            Expr::Switch(_, _, es) => es.first().unwrap().ty().clone(),
-            Expr::Nil => unreachable!(),
-        }
     }
 }
 
@@ -235,7 +264,7 @@ impl<'tcx> Interpreter<'tcx> {
                         })
                     })
                     .collect::<Vec<_>>();
-                let targets_expr = targets
+                let mut targets_expr = targets
                     .iter()
                     .map(|block| {
                         let mut interpreter = self.clone();
@@ -249,6 +278,10 @@ impl<'tcx> Interpreter<'tcx> {
                             .clone()
                     })
                     .collect::<Vec<_>>();
+
+                for i in 0..values_expr.len() {
+                    targets_expr[i].replace(&discr_expr, &values_expr[i]);
+                }
 
                 self.memory.clear();
                 self.memory.insert(
