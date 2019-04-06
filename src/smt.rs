@@ -44,7 +44,10 @@ impl ToSmt for Value {
     fn to_smt(&self) -> String {
         match self {
             Value::Arg(n, _) => format!("x{}", n),
-            Value::Const(b, ty) => format!("(_ bv{} {})", b, ty.size().unwrap()),
+            Value::Const(b, ty) => match ty {
+                Ty::Bool => format!("{}", *b != 0),
+                ty => format!("(_ bv{} {})", b, ty.size().unwrap()),
+            },
             Value::Function(n, _) => n.to_string(),
         }
     }
@@ -55,7 +58,7 @@ impl ToSmt for Expr {
         match self {
             Expr::Value(value) => value.to_smt(),
             Expr::BinaryOp(op, e1, e2) => {
-                let smt_op = match self.ty() {
+                let smt_op = match e1.ty() {
                     Ty::Bool => match op {
                         BinOp::Eq => "=",
                         BinOp::Ne => "!=",
@@ -98,12 +101,29 @@ impl ToSmt for Expr {
                 f.to_smt(),
                 es.iter().map(|e| e.to_smt()).collect::<Vec<_>>().join(" ")
             ),
-            Expr::Switch(val, cs, bs) if cs.len() == 1 => format!(
-                "(ite {} {} {})",
-                val.to_smt(),
-                bs[1].to_smt(),
-                bs[0].to_smt()
-            ),
+            Expr::Switch(val, cs, bs) => {
+                println!("{:?}: {:?}", val, val.ty());
+                if val.ty() == Ty::Bool {
+                    format!(
+                        "(ite {} {} {})",
+                        val.to_smt(),
+                        bs[1].to_smt(),
+                        bs[0].to_smt()
+                    )
+                } else {
+                    let mut cond = bs.last().unwrap().to_smt();
+                    for i in (0..cs.len()).rev() {
+                        cond = format!(
+                            "(ite (= {} {}) {} {})",
+                            val.to_smt(),
+                            cs[i].to_smt(),
+                            bs[i].to_smt(),
+                            cond
+                        );
+                    }
+                    cond
+                }
+            }
             _ => unimplemented!(),
         }
     }

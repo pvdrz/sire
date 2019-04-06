@@ -66,7 +66,10 @@ impl Expr {
                 Ty::Func(tys) => tys.first().unwrap().clone(),
                 _ => unreachable!(),
             },
-            Expr::BinaryOp(_, e1, _) => e1.ty(),
+            Expr::BinaryOp(op, e1, _) => match op {
+                BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => Ty::Bool,
+                _ => e1.ty(),
+            },
             Expr::Switch(_, _, es) => es.first().unwrap().ty().clone(),
             Expr::Nil => unreachable!(),
         }
