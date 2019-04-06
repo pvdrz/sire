@@ -3,71 +3,110 @@ use std::collections::HashMap;
 use rustc::hir::def_id::DefId;
 use rustc::mir::interpret::ConstValue;
 use rustc::mir::*;
+use rustc::ty::layout::Size;
 use rustc::ty::TyKind;
-use syntax::ast::{IntTy, UintTy};
 
-#[derive(Debug)]
-pub enum Ty {
-    Int,
-    Uint,
-    Bool,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FuncDef {
+    pub name: String,
+    pub body: Expr,
+    pub ty: Ty,
 }
 
-#[derive(Debug)]
-pub struct Function {
-    pub name: String,
-    pub args_ty: Vec<Ty>,
-    pub ret_ty: Ty,
-    pub body: Expr,
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Ty {
+    Int(usize),
+    Uint(usize),
+    Bool,
+    Func(Vec<Ty>),
+}
+
+impl Ty {
+    pub fn size(&self) -> Option<usize> {
+        match self {
+            Ty::Int(n) | Ty::Uint(n) => Some(*n),
+            Ty::Bool => Some(8),
+            Ty::Func(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
-    Place(usize),
-    Int(i64),
-    Uint(u64),
-    Bool(bool),
-    Function(String),
+    Value(Value),
     Apply(Box<Expr>, Vec<Expr>),
     BinaryOp(BinOp, Box<Expr>, Box<Expr>),
     Switch(Box<Expr>, Vec<Expr>, Vec<Expr>),
     Nil,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Value {
+    Arg(usize, Ty),
+    Const(u128, Ty),
+    Function(String, Ty),
+}
+
+impl Value {
+    pub fn ty(&self) -> Ty {
+        match self {
+            Value::Arg(_, ty) => ty,
+            Value::Const(_, ty) => ty,
+            Value::Function(_, ty) => ty,
+        }
+        .clone()
+    }
+}
+
+impl Expr {
+    pub fn ty(&self) -> Ty {
+        match self {
+            Expr::Value(value) => value.ty(),
+            Expr::Apply(e1, _) => match e1.ty() {
+                Ty::Func(tys) => tys.first().unwrap().clone(),
+                _ => unreachable!(),
+            },
+            Expr::BinaryOp(_, e1, _) => e1.ty(),
+            Expr::Switch(_, _, es) => es.first().unwrap().ty().clone(),
+            Expr::Nil => unreachable!(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Interpreter<'tcx> {
-    mir: Option<&'tcx Mir<'tcx>>,
     block: Option<BasicBlock>,
     statement: usize,
     memory: HashMap<Place<'tcx>, Expr>,
-    names: HashMap<DefId, String>,
+    funcs: HashMap<DefId, Value>,
+    mirs: HashMap<DefId, &'tcx Mir<'tcx>>,
+    def_id: Option<DefId>,
 }
 
 impl<'tcx> Interpreter<'tcx> {
-    pub fn new(names: HashMap<DefId, String>) -> Self {
+    pub fn new(funcs: HashMap<DefId, Value>, mirs: HashMap<DefId, &'tcx Mir<'tcx>>) -> Self {
         Interpreter {
-            mir: None,
             block: None,
             statement: 0,
             memory: HashMap::new(),
-            names,
+            funcs,
+            mirs,
+            def_id: None,
         }
     }
 
-    pub fn eval_mir(&mut self, mir: &'tcx Mir<'tcx>, name: String) -> EvalResult<Function> {
-        let mut args_ty = mir
-            .local_decls
-            .iter()
-            .take(mir.arg_count + 1)
-            .map(|local_decl| match local_decl.ty.sty {
-                TyKind::Bool => Ty::Bool,
-                TyKind::Int(IntTy::I64) => Ty::Int,
-                TyKind::Uint(UintTy::U64) => Ty::Uint,
-                _ => unimplemented!(),
-            })
-            .collect::<Vec<_>>();
+    fn mir(&self) -> &'tcx Mir<'tcx> {
+        self.mirs.get(&self.def_id.unwrap()).unwrap()
+    }
 
-        let ret_ty = args_ty.pop().unwrap();
+    pub fn eval_mir(&mut self, def_id: DefId) -> EvalResult<FuncDef> {
+        let (name, args_ty) = match self.funcs.get(&def_id).unwrap() {
+            Value::Function(name, Ty::Func(args_ty)) => (name.clone(), args_ty.clone()),
+            _ => unreachable!(),
+        };
+
+        self.def_id = Some(def_id);
+        let mir = self.mir();
 
         self.memory.insert(
             Place::Base(PlaceBase::Local(Local::from_usize(0))),
@@ -77,13 +116,14 @@ impl<'tcx> Interpreter<'tcx> {
         for i in 1usize..mir.arg_count + 1 {
             self.memory.insert(
                 Place::Base(PlaceBase::Local(Local::from_usize(i))),
-                Expr::Place(i),
+                Expr::Value(Value::Arg(i, args_ty[i].clone())),
             );
         }
 
-        self.mir = Some(mir);
         self.block = Some(BasicBlock::from_u32(0));
+
         self.run()?;
+
         for i in 1usize..mir.arg_count + 1 {
             self.memory
                 .remove(&Place::Base(PlaceBase::Local(Local::from_usize(i))));
@@ -94,11 +134,10 @@ impl<'tcx> Interpreter<'tcx> {
             .unwrap()
             .clone();
 
-        Ok(Function {
-            name,
-            args_ty,
-            ret_ty,
+        Ok(FuncDef {
             body,
+            name: name.clone(),
+            ty: Ty::Func(args_ty.clone()),
         })
     }
 
@@ -109,8 +148,7 @@ impl<'tcx> Interpreter<'tcx> {
 
     fn step(&mut self) -> EvalResult<bool> {
         let block_data = self
-            .mir
-            .expect("MIR should be some.")
+            .mir()
             .basic_blocks()
             .get(self.block.expect("Block should be some."))
             .expect("BlockData should be some.");
@@ -181,11 +219,17 @@ impl<'tcx> Interpreter<'tcx> {
                 let discr_expr = self.eval_operand(&discr)?;
                 let values_expr = values
                     .iter()
-                    .map(|&bytes| match switch_ty.sty {
-                        TyKind::Bool => Expr::Bool(bytes != 0),
-                        TyKind::Int(IntTy::I64) => Expr::Int(bytes as i64),
-                        TyKind::Uint(UintTy::U64) => Expr::Uint(bytes as u64),
-                        _ => unimplemented!(),
+                    .map(|&bytes| {
+                        Expr::Value(match switch_ty.sty {
+                            TyKind::Bool => Value::Const(bytes, Ty::Bool),
+                            TyKind::Int(int_ty) => {
+                                Value::Const(bytes, Ty::Int(int_ty.bit_width().unwrap_or(64)))
+                            }
+                            TyKind::Uint(uint_ty) => {
+                                Value::Const(bytes, Ty::Uint(uint_ty.bit_width().unwrap_or(64)))
+                            }
+                            _ => unimplemented!(),
+                        })
                     })
                     .collect::<Vec<_>>();
                 let targets_expr = targets
@@ -245,27 +289,34 @@ impl<'tcx> Interpreter<'tcx> {
                 .expect("Place in operand should be some.")
                 .clone(),
 
-            Operand::Constant(constant) => match constant.ty.sty {
+            Operand::Constant(constant) => Expr::Value(match constant.ty.sty {
                 TyKind::Bool => match constant.literal.val {
-                    ConstValue::Scalar(scalar) => Expr::Bool(scalar.to_bool().unwrap()),
+                    ConstValue::Scalar(scalar) => {
+                        Value::Const(scalar.to_bits(Size::from_bits(8)).unwrap(), Ty::Bool)
+                    }
                     _ => unimplemented!(),
                 },
-                TyKind::Int(IntTy::I64) => match constant.literal.val {
-                    ConstValue::Scalar(scalar) => Expr::Int(scalar.to_i64().unwrap()),
+                TyKind::Int(int_ty) => match constant.literal.val {
+                    ConstValue::Scalar(scalar) => Value::Const(
+                        scalar
+                            .to_bits(Size::from_bits(int_ty.bit_width().unwrap_or(64) as u64))
+                            .unwrap(),
+                        Ty::Int(64),
+                    ),
                     _ => unimplemented!(),
                 },
-                TyKind::Uint(UintTy::U64) => match constant.literal.val {
-                    ConstValue::Scalar(scalar) => Expr::Uint(scalar.to_u64().unwrap()),
+                TyKind::Uint(uint_ty) => match constant.literal.val {
+                    ConstValue::Scalar(scalar) => Value::Const(
+                        scalar
+                            .to_bits(Size::from_bits(uint_ty.bit_width().unwrap_or(64) as u64))
+                            .unwrap(),
+                        Ty::Uint(64),
+                    ),
                     _ => unimplemented!(),
                 },
-                TyKind::FnDef(ref def_id, _) => Expr::Function(
-                    self.names
-                        .get(def_id)
-                        .expect("DefId should be some.")
-                        .clone(),
-                ),
+                TyKind::FnDef(ref def_id, _) => self.funcs.get(def_id).unwrap().clone(),
                 _ => unimplemented!(),
-            },
+            }),
         })
     }
 }

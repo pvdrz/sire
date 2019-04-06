@@ -8,12 +8,14 @@ extern crate syntax;
 mod interpreter;
 mod smt;
 
-use crate::interpreter::Interpreter;
+use crate::interpreter::{Interpreter, Ty, Value};
 use crate::smt::ToSmt;
 
 use std::collections::HashMap;
 
+use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::hir::ItemKind;
+use rustc::ty::TyKind;
 use rustc_driver::{report_ices_to_stderr_if_any, run_compiler, Callbacks};
 use rustc_interface::interface;
 
@@ -40,27 +42,43 @@ impl Callbacks for SireCompilerCalls {
         compiler.session().abort_if_errors();
         compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
             let hir = tcx.hir();
-            let mut mir_fns = HashMap::new();
-            let mut names = HashMap::new();
+            let mut mirs = HashMap::new();
+            let mut funcs = HashMap::new();
+            let mut def_ids = Vec::new();
+
+            let (entry_def_id, _) = tcx.entry_fn(LOCAL_CRATE).expect("no main function found!");
 
             for (node_id, item) in &hir.krate().items {
                 if let ItemKind::Fn(_, _, _, _) = item.node {
                     let def_id = hir.local_def_id(*node_id);
-                    let name = tcx.def_path(def_id).to_filename_friendly_no_crate();
-                    let mir = tcx.optimized_mir(def_id);
-                    mir_fns.insert(name.clone(), mir);
-                    names.insert(def_id, name);
+                    if def_id != entry_def_id {
+                        let name = tcx.def_path(def_id).to_filename_friendly_no_crate();
+                        let mir = tcx.optimized_mir(def_id);
+                        let args_ty = mir
+                            .local_decls
+                            .iter()
+                            .take(mir.arg_count + 1)
+                            .map(|local_decl| match local_decl.ty.sty {
+                                TyKind::Bool => Ty::Bool,
+                                TyKind::Int(int_ty) => Ty::Int(int_ty.bit_width().unwrap_or(64)),
+                                TyKind::Uint(uint_ty) => {
+                                    Ty::Uint(uint_ty.bit_width().unwrap_or(64))
+                                }
+                                _ => unimplemented!(),
+                            })
+                            .collect::<Vec<Ty>>();
+
+                        mirs.insert(def_id, mir);
+                        funcs.insert(def_id, Value::Function(name, Ty::Func(args_ty)));
+                        def_ids.push(def_id);
+                    }
                 }
             }
 
-            let mut interpreter = Interpreter::new(names);
-
-            for (name, mir) in mir_fns {
-                // It should be better to use IDs...
-                if name != "main" {
-                    let result = interpreter.eval_mir(mir, name);
-                    println!("{}", result.unwrap().to_smt());
-                }
+            let mut interpreter = Interpreter::new(funcs, mirs);
+            for def_id in def_ids {
+                let result = interpreter.eval_mir(def_id).unwrap();
+                println!("{}", result.to_smt());
             }
         });
 

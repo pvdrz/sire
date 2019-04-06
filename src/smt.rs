@@ -1,57 +1,97 @@
-use crate::interpreter::{Expr, Function, Ty};
+use crate::interpreter::{Expr, FuncDef, Ty, Value};
 use rustc::mir::BinOp;
 
 pub trait ToSmt {
     fn to_smt(&self) -> String;
 }
 
-impl ToSmt for Ty {
+impl ToSmt for FuncDef {
     fn to_smt(&self) -> String {
-        match self {
-            Ty::Int => "Int",
-            Ty::Uint => "Int",
-            Ty::Bool => "Bool",
+        let body = self.body.to_smt();
+        let mut args_vec = match &self.ty {
+            Ty::Func(vec) => vec.clone(),
+            _ => unreachable!(),
+        };
+
+        let ret_ty = args_vec.remove(0).to_smt();
+
+        let mut args = String::new();
+        let mut args_with_ty = String::new();
+        let mut args_ty = String::new();
+
+        for (i, ty) in args_vec.iter().enumerate() {
+            let smt_ty = ty.to_smt();
+            args += &format!("x{} ", i + 1);
+            args_with_ty += &format!("(x{} {}) ", i + 1, smt_ty);
+            args_ty += &format!("{} ", smt_ty);
         }
-        .to_owned()
+
+        args.pop().unwrap();
+        args_with_ty.pop().unwrap();
+        args_ty.pop().unwrap();
+
+        format!("(declare-fun {name} ({args_ty}) {ret_ty})\n(assert (forall ({args_with_ty}) (= ({name} {args}) {body})))\n", name = self.name, ret_ty = ret_ty, args = args, args_ty = args_ty, args_with_ty = args_with_ty, body = body)
     }
 }
 
-impl ToSmt for Function {
+impl ToSmt for Ty {
     fn to_smt(&self) -> String {
-        let body = self.body.to_smt();
-        let args = (0..self.args_ty.len())
-            .map(|i| format!("x{}", i + 1))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let args_with_ty = self
-            .args_ty
-            .iter()
-            .enumerate()
-            .map(|(i, ty)| format!("(x{} {})", i + 1, ty.to_smt()))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let args_ty = self
-            .args_ty
-            .iter()
-            .map(|ty| ty.to_smt())
-            .collect::<Vec<_>>()
-            .join(" ");
-        let ret_ty = self.ret_ty.to_smt();
+        format!("(_ BitVec {})", self.size().unwrap())
+    }
+}
 
-        format!("(declare-fun {name} ({args_ty}) {ret_ty})\n(assert (forall ({args_with_ty}) (= ({name} {args}) {body})))\n", name = self.name, ret_ty = ret_ty, args = args, args_ty = args_ty, args_with_ty = args_with_ty, body = body)
+impl ToSmt for Value {
+    fn to_smt(&self) -> String {
+        match self {
+            Value::Arg(n, _) => format!("x{}", n),
+            Value::Const(b, ty) => format!("(_ bv{} {})", b, ty.size().unwrap()),
+            Value::Function(n, _) => n.to_string(),
+        }
     }
 }
 
 impl ToSmt for Expr {
     fn to_smt(&self) -> String {
         match self {
-            Expr::Function(fun) => fun.clone(),
-            Expr::Int(value) => value.to_string(),
-            Expr::Uint(value) => value.to_string(),
-            Expr::Bool(value) => value.to_string(),
-            Expr::Place(id) => format!("x{}", id),
+            Expr::Value(value) => value.to_smt(),
             Expr::BinaryOp(op, e1, e2) => {
-                format!("({} {} {})", op.to_smt(), e1.to_smt(), e2.to_smt())
+                let smt_op = match self.ty() {
+                    Ty::Bool => match op {
+                        BinOp::Eq => "=",
+                        BinOp::Ne => "!=",
+                        _ => unreachable!(),
+                    },
+                    Ty::Int(_) => match op {
+                        BinOp::Add => "bvadd",
+                        BinOp::Sub => "bvsub",
+                        BinOp::Mul => "bvmul",
+                        BinOp::Div => "bvsdiv",
+                        BinOp::Rem => "bvsrem",
+                        BinOp::Eq => "=",
+                        BinOp::Lt => "bvslt",
+                        BinOp::Le => "bvsle",
+                        BinOp::Ne => "!=",
+                        BinOp::Ge => "bvsge",
+                        BinOp::Gt => "bvsgt",
+                        _ => unreachable!(),
+                    },
+                    Ty::Uint(_) => match op {
+                        BinOp::Add => "bvadd",
+                        BinOp::Sub => "bvsub",
+                        BinOp::Mul => "bvmul",
+                        BinOp::Div => "bvudiv",
+                        BinOp::Rem => "bvurem",
+                        BinOp::Eq => "=",
+                        BinOp::Lt => "bvult",
+                        BinOp::Le => "bvule",
+                        BinOp::Ne => "!=",
+                        BinOp::Ge => "bvuge",
+                        BinOp::Gt => "bvugt",
+                        _ => unreachable!(),
+                    },
+                    _ => unreachable!(),
+                };
+                format!("({} {} {})", smt_op, e1.to_smt(), e2.to_smt())
             }
             Expr::Apply(f, es) => format!(
                 "({} {})",
@@ -66,25 +106,5 @@ impl ToSmt for Expr {
             ),
             _ => unimplemented!(),
         }
-    }
-}
-
-impl ToSmt for BinOp {
-    fn to_smt(&self) -> String {
-        match self {
-            BinOp::Add => "+",
-            BinOp::Sub => "-",
-            BinOp::Mul => "*",
-            BinOp::Div => "/",
-            BinOp::Rem => "%",
-            BinOp::Eq => "=",
-            BinOp::Lt => "<",
-            BinOp::Le => "<=",
-            BinOp::Ne => "!=",
-            BinOp::Ge => ">=",
-            BinOp::Gt => ">",
-            _ => unimplemented!(),
-        }
-        .to_owned()
     }
 }
