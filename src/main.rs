@@ -7,6 +7,7 @@ extern crate syntax;
 
 mod interpreter;
 mod smt;
+mod analysis;
 
 use crate::interpreter::{Interpreter, Ty, Value};
 use crate::smt::ToSmt;

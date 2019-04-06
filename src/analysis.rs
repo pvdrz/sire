@@ -1,25 +1,25 @@
-use crate::mir::*;
+use rustc::mir::*;
 
-pub fn find_loop(fun: &Function) -> Option<Vec<BlockID>> {
-    get_loop_start(fun, &BlockID(0), Vec::new())
+pub fn find_loop<'tcx>(mir: &'tcx Mir<'tcx>) -> Option<Vec<BasicBlock>> {
+    get_loop_start(mir, BasicBlock::from_u32(0), Vec::new())
 }
 
-fn get_loop_start(
-    fun: &Function,
-    block_id: &BlockID,
-    mut visited: Vec<BlockID>,
-) -> Option<Vec<BlockID>> {
-    match visited.iter().enumerate().find(|(_, b)| **b == *block_id) {
+fn get_loop_start<'tcx>(
+    mir: &'tcx Mir<'tcx>,
+    block: BasicBlock,
+    mut visited: Vec<BasicBlock>,
+) -> Option<Vec<BasicBlock>> {
+    match visited.iter().enumerate().find(|(_, b)| **b == block) {
         Some((i, _)) => Some(visited.split_off(i)),
         None => {
-            let block = fun.get_block(block_id)?;
-            visited.push(block_id.clone());
-            match block.get_terminator() {
-                Terminator::Goto(next_id) => get_loop_start(fun, next_id, visited),
-                Terminator::SwitchInt(_, _, next_ids) => {
+            let blk = mir.basic_blocks().get(block)?;
+            visited.push(block);
+            match blk.terminator().kind {
+                TerminatorKind::Goto { target } => get_loop_start(mir, target, visited),
+                TerminatorKind::SwitchInt { ref targets, .. } => {
                     let mut result = None;
-                    for next_id in next_ids {
-                        result = get_loop_start(fun, next_id, visited.clone());
+                    for target in targets {
+                        result = get_loop_start(mir, *target, visited.clone());
                         if result.is_some() {
                             break;
                         }

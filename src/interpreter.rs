@@ -1,3 +1,5 @@
+use crate::analysis::find_loop;
+
 use std::collections::HashMap;
 
 use rustc::hir::def_id::DefId;
@@ -132,12 +134,17 @@ impl<'tcx> Interpreter<'tcx> {
     }
 
     pub fn eval_mir(&mut self, def_id: DefId) -> EvalResult<FuncDef> {
+        self.def_id = Some(def_id);
+
+        if find_loop(self.mir()).is_some() {
+            return Err(EvalError::new("MIR contains loops"));
+        }
+
         let (name, args_ty) = match self.funcs.get(&def_id).unwrap() {
             Value::Function(name, Ty::Func(args_ty)) => (name.clone(), args_ty.clone()),
             _ => unreachable!(),
         };
 
-        self.def_id = Some(def_id);
         let mir = self.mir();
 
         self.memory.insert(
@@ -163,8 +170,7 @@ impl<'tcx> Interpreter<'tcx> {
         let body = self
             .memory
             .remove(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
-            .unwrap()
-            .clone();
+            .unwrap();
 
         Ok(FuncDef {
             body,
@@ -173,7 +179,7 @@ impl<'tcx> Interpreter<'tcx> {
         })
     }
 
-    pub fn run(&mut self) -> EvalResult {
+    fn run(&mut self) -> EvalResult {
         while self.step()? {}
         Ok(())
     }
