@@ -10,11 +10,9 @@ fn main() {
 
 }
 
-fn sum(n: i64, m: i64) -> i64 {
+fn sum(n: u64, m: u64) -> u64 {
     if m > 0 {
         sum(n + 1, m - 1)
-    } else if m < 0 {
-        sum(n - 1, m + 1)
     } else {
         n
     } 
@@ -26,10 +24,10 @@ $ cargo run some_code.rs -C opt-level=3
 ```
 then Sire should print something like 
 ```
-(declare-fun sum (Int Int) Int)
-(assert (forall ((x1 Int) (x2 Int)) (= (sum x1 x2) (ite (> x2 0) (sum (+ x1 1) (- x2 1)) (ite (< x2 0) (sum (- x1 1) (+ x2 1)) x1)))))
+(declare-fun sum ((_ BitVec 64) (_ BitVec 64)) (_ BitVec 64))
+(assert (forall ((x1 (_ BitVec 64)) (x2 (_ BitVec 64))) (= (sum x1 x2) (ite (bvugt x2 (_ bv0 64)) (sum (bvadd x1 (_ bv1 64)) (bvsub x2 (_ bv1 64))) x1))))
 ```
-Then you can use this code to reason about the `sum` function using [z3](https://rise4fun.com/Z3/F0Qk) for example.
+you can use this code to reason about the `sum` function using [z3](https://rise4fun.com/Z3/sl8wn) for example.
 
 ## Coverage
 
@@ -55,7 +53,7 @@ Right now, just an small set of Rust functions can be evaluated with Sire (basic
     - `Move` and `Copy`
     - `Constant` (only scalars)
 
-Additionaly, just the `i64`, `u64` and `bool` types are supported.
+Additionaly, just the integer (both signed and unsigned) and boolean types are supported.
 
 If you have any suggestions or questions feel free to open an issue/write me an email :)
 
