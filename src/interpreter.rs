@@ -3,10 +3,12 @@ use crate::lang::*;
 use std::collections::HashMap;
 
 use rustc::hir::def_id::DefId;
+use rustc::hir::def_id::LOCAL_CRATE;
+use rustc::hir::ItemKind;
 use rustc::mir::interpret::ConstValue;
 use rustc::mir::*;
 use rustc::ty::layout::Size;
-use rustc::ty::TyKind;
+use rustc::ty::{TyCtxt, TyKind};
 
 pub type EvalResult<T = ()> = Result<T, EvalError>;
 
@@ -28,7 +30,39 @@ pub struct Interpreter<'tcx> {
 }
 
 impl<'tcx> Interpreter<'tcx> {
-    pub fn new(funcs: HashMap<DefId, Value>, mirs: HashMap<DefId, &'tcx Mir<'tcx>>) -> Self {
+    pub fn from_tcx<'a, 'gcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>) -> Self {
+        let hir = tcx.hir();
+        let mut mirs = HashMap::new();
+        let mut funcs = HashMap::new();
+        let mut def_ids = Vec::new();
+
+        let (entry_def_id, _) = tcx.entry_fn(LOCAL_CRATE).expect("no main function found!");
+
+        for (node_id, item) in &hir.krate().items {
+            if let ItemKind::Fn(_, _, _, _) = item.node {
+                let def_id = hir.local_def_id(*node_id);
+                if def_id != entry_def_id {
+                    let name = tcx.def_path(def_id).to_filename_friendly_no_crate();
+                    let mir = tcx.optimized_mir(def_id);
+                    let args_ty = mir
+                        .local_decls
+                        .iter()
+                        .take(mir.arg_count + 1)
+                        .map(|local_decl| match local_decl.ty.sty {
+                            TyKind::Bool => Ty::Bool,
+                            TyKind::Int(int_ty) => Ty::Int(int_ty.bit_width().unwrap_or(64)),
+                            TyKind::Uint(uint_ty) => Ty::Uint(uint_ty.bit_width().unwrap_or(64)),
+                            _ => unimplemented!(),
+                        })
+                        .collect::<Vec<Ty>>();
+
+                    mirs.insert(def_id, mir);
+                    funcs.insert(def_id, Value::Function(name, Ty::Func(args_ty)));
+                    def_ids.push(def_id);
+                }
+            }
+        }
+
         Interpreter {
             block: None,
             statement: 0,
@@ -39,12 +73,24 @@ impl<'tcx> Interpreter<'tcx> {
         }
     }
 
+    pub fn eval_all(&mut self) -> EvalResult<Vec<FuncDef>> {
+        let mut func_defs = Vec::new();
+        let def_ids = self.mirs.keys().cloned().collect::<Vec<DefId>>();
+        for def_id in def_ids {
+            func_defs.push(self.eval_mir(def_id)?);
+        }
+        Ok(func_defs)
+    }
+
     pub fn eval_mir(&mut self, def_id: DefId) -> EvalResult<FuncDef> {
-        let (name, args_ty) = match self.funcs.get(&def_id).ok_or(eval_err!("Mir wit DefId {:?} not found", def_id))? {
+        let (name, args_ty) = match self
+            .funcs
+            .get(&def_id)
+            .ok_or(eval_err!("Mir wit DefId {:?} not found", def_id))?
+        {
             Value::Function(name, Ty::Func(args_ty)) => (name.clone(), args_ty.clone()),
             _ => unreachable!(),
         };
-
 
         self.memory.insert(
             Place::Base(PlaceBase::Local(Local::from_usize(0))),
@@ -144,7 +190,10 @@ impl<'tcx> Interpreter<'tcx> {
                     for op in args {
                         args_expr.push(self.eval_operand(op)?);
                     }
-                    *self.memory.get_mut(place).ok_or(eval_err!("Place {:?} is uninitialized", place))? =
+                    *self
+                        .memory
+                        .get_mut(place)
+                        .ok_or(eval_err!("Place {:?} is uninitialized", place))? =
                         Expr::Apply(Box::new(func_expr), args_expr);
                     self.block = Some(*block);
                     self.statement = 0;
@@ -162,7 +211,7 @@ impl<'tcx> Interpreter<'tcx> {
                 let discr_expr = self.eval_operand(&discr)?;
                 let mut values_expr = Vec::new();
                 let mut targets_expr = Vec::new();
-                
+
                 for i in 0..values.len() {
                     let bytes = values[i];
                     let block = targets[i];
@@ -173,20 +222,24 @@ impl<'tcx> Interpreter<'tcx> {
                     interpreter.run()?;
 
                     let value_expr = Expr::Value(match switch_ty.sty {
-                            TyKind::Bool => Value::Const(bytes, Ty::Bool),
-                            TyKind::Int(int_ty) => {
-                                Value::Const(bytes, Ty::Int(int_ty.bit_width().unwrap_or(64)))
-                            }
-                            TyKind::Uint(uint_ty) => {
-                                Value::Const(bytes, Ty::Uint(uint_ty.bit_width().unwrap_or(64)))
-                            }
-                            _ => unimplemented!(),
-                        });
+                        TyKind::Bool => Value::Const(bytes, Ty::Bool),
+                        TyKind::Int(int_ty) => {
+                            Value::Const(bytes, Ty::Int(int_ty.bit_width().unwrap_or(64)))
+                        }
+                        TyKind::Uint(uint_ty) => {
+                            Value::Const(bytes, Ty::Uint(uint_ty.bit_width().unwrap_or(64)))
+                        }
+                        _ => unimplemented!(),
+                    });
 
-                    let mut target_expr = interpreter.memory.get(&Place::Base(PlaceBase::Local(Local::from_u32(0)))).ok_or(eval_err!("Return place is uninitialized"))? .clone();
+                    let mut target_expr = interpreter
+                        .memory
+                        .get(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
+                        .ok_or(eval_err!("Return place is uninitialized"))?
+                        .clone();
 
                     target_expr.replace(&discr_expr, &value_expr);
-                    
+
                     values_expr.push(value_expr);
                     targets_expr.push(target_expr);
                 }
@@ -194,10 +247,19 @@ impl<'tcx> Interpreter<'tcx> {
                 self.block = Some(targets.last().unwrap().clone());
                 self.statement = 0;
                 self.run()?;
-                
-                targets_expr.push(self.memory.get(&Place::Base(PlaceBase::Local(Local::from_u32(0)))).ok_or(eval_err!("Return place is uninitialized"))?.clone());
 
-                *self.memory.get_mut(&Place::Base(PlaceBase::Local(Local::from_u32(0)))).ok_or(eval_err!("Return place is uninitialized"))? = Expr::Switch(Box::new(discr_expr), values_expr, targets_expr);
+                targets_expr.push(
+                    self.memory
+                        .get(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
+                        .ok_or(eval_err!("Return place is uninitialized"))?
+                        .clone(),
+                );
+
+                *self
+                    .memory
+                    .get_mut(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
+                    .ok_or(eval_err!("Return place is uninitialized"))? =
+                    Expr::Switch(Box::new(discr_expr), values_expr, targets_expr);
 
                 self.block = None;
                 self.statement = 0;
@@ -223,7 +285,10 @@ impl<'tcx> Interpreter<'tcx> {
             _ => unimplemented!(),
         };
 
-        *self.memory.get_mut(place).ok_or(eval_err!("Place {:?} in assignment is uninitialized", place))? = value;
+        *self.memory.get_mut(place).ok_or(eval_err!(
+            "Place {:?} in assignment is uninitialized",
+            place
+        ))? = value;
 
         Ok(())
     }
@@ -261,10 +326,13 @@ impl<'tcx> Interpreter<'tcx> {
                     ),
                     _ => unimplemented!(),
                 },
-                TyKind::FnDef(ref def_id, _) => self.funcs.get(def_id).ok_or(eval_err!("Function with DefId {:?} not found", def_id))?.clone(),
+                TyKind::FnDef(ref def_id, _) => self
+                    .funcs
+                    .get(def_id)
+                    .ok_or(eval_err!("Function with DefId {:?} not found", def_id))?
+                    .clone(),
                 _ => unimplemented!(),
             }),
         })
     }
 }
-
