@@ -99,7 +99,7 @@ impl ToSmt for Expr {
             Expr::Apply(f, es) => format!(
                 "({} {})",
                 f.to_smt(),
-                es.iter().map(|e| e.to_smt()).collect::<Vec<_>>().join(" ")
+                es.iter().map(ToSmt::to_smt).collect::<Vec<_>>().join(" ")
             ),
             Expr::Switch(val, cs, bs) => {
                 println!("{:?}: {:?}", val, val.ty());
