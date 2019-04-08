@@ -8,8 +8,10 @@ extern crate syntax;
 mod interpreter;
 mod smt;
 mod analysis;
+mod lang;
 
-use crate::interpreter::{Interpreter, Ty, Value};
+use crate::interpreter::Interpreter;
+use crate::lang::{Ty, Value};
 use crate::smt::ToSmt;
 
 use std::collections::HashMap;

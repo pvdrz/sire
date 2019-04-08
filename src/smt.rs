@@ -1,4 +1,4 @@
-use crate::interpreter::{Expr, FuncDef, Ty, Value};
+use crate::lang::*;
 use rustc::mir::BinOp;
 
 pub trait ToSmt {

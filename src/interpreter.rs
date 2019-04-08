@@ -1,4 +1,4 @@
-use crate::analysis::find_loop;
+use crate::lang::*;
 
 use std::collections::HashMap;
 
@@ -8,103 +8,13 @@ use rustc::mir::*;
 use rustc::ty::layout::Size;
 use rustc::ty::TyKind;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FuncDef {
-    pub name: String,
-    pub body: Expr,
-    pub ty: Ty,
-}
+pub type EvalResult<T = ()> = Result<T, EvalError>;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Ty {
-    Int(usize),
-    Uint(usize),
-    Bool,
-    Func(Vec<Ty>),
-}
+#[derive(Debug)]
+pub struct EvalError(String);
 
-impl Ty {
-    pub fn size(&self) -> Option<usize> {
-        match self {
-            Ty::Int(n) | Ty::Uint(n) => Some(*n),
-            Ty::Bool => Some(8),
-            Ty::Func(_) => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Expr {
-    Value(Value),
-    Apply(Box<Expr>, Vec<Expr>),
-    BinaryOp(BinOp, Box<Expr>, Box<Expr>),
-    Switch(Box<Expr>, Vec<Expr>, Vec<Expr>),
-    Nil,
-}
-
-impl Expr {
-    fn replace(&mut self, target: &Self, substitution: &Self) {
-        if *self == *target {
-            *self = substitution.clone();
-        } else {
-            match self {
-                Expr::Apply(e1, e2) => {
-                    e1.replace(target, substitution);
-                    for e in e2 {
-                        e.replace(target, substitution);
-                    }
-                }
-                Expr::Switch(e1, e2, e3) => {
-                    e1.replace(target, substitution);
-                    for e in e2 {
-                        e.replace(target, substitution);
-                    }
-                    for e in e3 {
-                        e.replace(target, substitution);
-                    }
-                }
-                Expr::BinaryOp(_, e1, e2) => {
-                    e1.replace(target, substitution);
-                    e2.replace(target, substitution);
-                }
-                _ => (),
-            }
-        }
-    }
-
-    pub fn ty(&self) -> Ty {
-        match self {
-            Expr::Value(value) => value.ty(),
-            Expr::Apply(e1, _) => match e1.ty() {
-                Ty::Func(tys) => tys.first().unwrap().clone(),
-                _ => unreachable!(),
-            },
-            Expr::BinaryOp(op, e1, _) => match op {
-                BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => Ty::Bool,
-                _ => e1.ty(),
-            },
-            Expr::Switch(_, _, es) => es.first().unwrap().ty().clone(),
-            Expr::Nil => unreachable!(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Value {
-    Arg(usize, Ty),
-    Const(u128, Ty),
-    Function(String, Ty),
-}
-
-impl Value {
-    pub fn ty(&self) -> Ty {
-        match self {
-            Value::Arg(_, ty) => ty,
-            Value::Const(_, ty) => ty,
-            Value::Function(_, ty) => ty,
-        }
-        .clone()
-    }
+macro_rules! eval_err {
+    ($($arg:tt)*) => (EvalError(format!($($arg)*)))
 }
 
 #[derive(Clone)]
@@ -129,48 +39,41 @@ impl<'tcx> Interpreter<'tcx> {
         }
     }
 
-    fn mir(&self) -> &'tcx Mir<'tcx> {
-        self.mirs.get(&self.def_id.unwrap()).unwrap()
-    }
-
     pub fn eval_mir(&mut self, def_id: DefId) -> EvalResult<FuncDef> {
-        self.def_id = Some(def_id);
-
-        if find_loop(self.mir()).is_some() {
-            return Err(EvalError::new("MIR contains loops"));
-        }
-
-        let (name, args_ty) = match self.funcs.get(&def_id).unwrap() {
+        let (name, args_ty) = match self.funcs.get(&def_id).ok_or(eval_err!("Mir wit DefId {:?} not found", def_id))? {
             Value::Function(name, Ty::Func(args_ty)) => (name.clone(), args_ty.clone()),
             _ => unreachable!(),
         };
 
-        let mir = self.mir();
 
         self.memory.insert(
             Place::Base(PlaceBase::Local(Local::from_usize(0))),
             Expr::Nil,
         );
 
-        for i in 1usize..mir.arg_count + 1 {
+        for i in 1usize..args_ty.len() {
             self.memory.insert(
                 Place::Base(PlaceBase::Local(Local::from_usize(i))),
                 Expr::Value(Value::Arg(i, args_ty[i].clone())),
             );
         }
 
+        self.def_id = Some(def_id);
         self.block = Some(BasicBlock::from_u32(0));
 
         self.run()?;
 
-        for i in 1usize..mir.arg_count + 1 {
+        for i in 1usize..args_ty.len() {
+            let place = Place::Base(PlaceBase::Local(Local::from_usize(i)));
             self.memory
-                .remove(&Place::Base(PlaceBase::Local(Local::from_usize(i))));
+                .remove(&place)
+                .ok_or(eval_err!("Double free error on place {:?}", place))?;
         }
+
         let body = self
             .memory
             .remove(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
-            .unwrap();
+            .ok_or(eval_err!("Double free error on return place"))?;
 
         Ok(FuncDef {
             body,
@@ -186,10 +89,12 @@ impl<'tcx> Interpreter<'tcx> {
 
     fn step(&mut self) -> EvalResult<bool> {
         let block_data = self
-            .mir()
+            .mirs
+            .get(&self.def_id.expect("Bug: DefId should be some"))
+            .expect("Bug: Mir should exist")
             .basic_blocks()
-            .get(self.block.expect("Block should be some."))
-            .expect("BlockData should be some.");
+            .get(self.block.expect("Bug: Block should be some"))
+            .ok_or(eval_err!("Basic block not found"))?;
 
         match block_data.statements.get(self.statement) {
             Some(statement) => self.eval_statement(statement),
@@ -239,7 +144,7 @@ impl<'tcx> Interpreter<'tcx> {
                     for op in args {
                         args_expr.push(self.eval_operand(op)?);
                     }
-                    *self.memory.get_mut(place).expect("Memory should be some.") =
+                    *self.memory.get_mut(place).ok_or(eval_err!("Place {:?} is uninitialized", place))? =
                         Expr::Apply(Box::new(func_expr), args_expr);
                     self.block = Some(*block);
                     self.statement = 0;
@@ -255,10 +160,19 @@ impl<'tcx> Interpreter<'tcx> {
                 ..
             } => {
                 let discr_expr = self.eval_operand(&discr)?;
-                let values_expr = values
-                    .iter()
-                    .map(|&bytes| {
-                        Expr::Value(match switch_ty.sty {
+                let mut values_expr = Vec::new();
+                let mut targets_expr = Vec::new();
+                
+                for i in 0..values.len() {
+                    let bytes = values[i];
+                    let block = targets[i];
+
+                    let mut interpreter = self.clone();
+                    interpreter.block = Some(block);
+                    interpreter.statement = 0;
+                    interpreter.run()?;
+
+                    let value_expr = Expr::Value(match switch_ty.sty {
                             TyKind::Bool => Value::Const(bytes, Ty::Bool),
                             TyKind::Int(int_ty) => {
                                 Value::Const(bytes, Ty::Int(int_ty.bit_width().unwrap_or(64)))
@@ -267,33 +181,23 @@ impl<'tcx> Interpreter<'tcx> {
                                 Value::Const(bytes, Ty::Uint(uint_ty.bit_width().unwrap_or(64)))
                             }
                             _ => unimplemented!(),
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                let mut targets_expr = targets
-                    .iter()
-                    .map(|block| {
-                        let mut interpreter = self.clone();
-                        interpreter.block = Some(*block);
-                        interpreter.statement = 0;
-                        interpreter.run().unwrap();
-                        interpreter
-                            .memory
-                            .get(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
-                            .unwrap()
-                            .clone()
-                    })
-                    .collect::<Vec<_>>();
+                        });
 
-                for i in 0..values_expr.len() {
-                    targets_expr[i].replace(&discr_expr, &values_expr[i]);
+                    let mut target_expr = interpreter.memory.get(&Place::Base(PlaceBase::Local(Local::from_u32(0)))).ok_or(eval_err!("Return place is uninitialized"))? .clone();
+
+                    target_expr.replace(&discr_expr, &value_expr);
+                    
+                    values_expr.push(value_expr);
+                    targets_expr.push(target_expr);
                 }
 
-                self.memory.clear();
-                self.memory.insert(
-                    Place::Base(PlaceBase::Local(Local::from_u32(0))),
-                    Expr::Switch(Box::new(discr_expr), values_expr, targets_expr),
-                );
+                self.block = Some(targets.last().unwrap().clone());
+                self.statement = 0;
+                self.run()?;
+                
+                targets_expr.push(self.memory.get(&Place::Base(PlaceBase::Local(Local::from_u32(0)))).ok_or(eval_err!("Return place is uninitialized"))?.clone());
+
+                *self.memory.get_mut(&Place::Base(PlaceBase::Local(Local::from_u32(0)))).ok_or(eval_err!("Return place is uninitialized"))? = Expr::Switch(Box::new(discr_expr), values_expr, targets_expr);
 
                 self.block = None;
                 self.statement = 0;
@@ -313,13 +217,14 @@ impl<'tcx> Interpreter<'tcx> {
             Rvalue::Ref(_, BorrowKind::Shared, place) => self
                 .memory
                 .get(place)
-                .expect("Reference should be some.")
+                .ok_or(eval_err!("Place {:?} in reference is uninitialized", place))?
                 .clone(),
             Rvalue::Use(op) => self.eval_operand(op)?,
             _ => unimplemented!(),
         };
 
-        *self.memory.get_mut(place).expect("Place should be some.") = value;
+        *self.memory.get_mut(place).ok_or(eval_err!("Place {:?} in assignment is uninitialized", place))? = value;
+
         Ok(())
     }
 
@@ -328,7 +233,7 @@ impl<'tcx> Interpreter<'tcx> {
             Operand::Move(place) | Operand::Copy(place) => self
                 .memory
                 .get(place)
-                .expect("Place in operand should be some.")
+                .ok_or(eval_err!("Place {:?} in move/copy is uninitialized", place))?
                 .clone(),
 
             Operand::Constant(constant) => Expr::Value(match constant.ty.sty {
@@ -356,20 +261,10 @@ impl<'tcx> Interpreter<'tcx> {
                     ),
                     _ => unimplemented!(),
                 },
-                TyKind::FnDef(ref def_id, _) => self.funcs.get(def_id).unwrap().clone(),
+                TyKind::FnDef(ref def_id, _) => self.funcs.get(def_id).ok_or(eval_err!("Function with DefId {:?} not found", def_id))?.clone(),
                 _ => unimplemented!(),
             }),
         })
     }
 }
 
-pub type EvalResult<T = ()> = Result<T, EvalError>;
-
-#[derive(Debug)]
-pub struct EvalError(String);
-
-impl EvalError {
-    pub fn new(inner: &str) -> Self {
-        EvalError(inner.to_owned())
-    }
-}
