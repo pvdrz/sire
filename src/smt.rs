@@ -26,9 +26,9 @@ impl ToSmt for FuncDef {
             args_ty += &format!("{} ", smt_ty);
         }
 
-        args.pop().unwrap();
-        args_with_ty.pop().unwrap();
-        args_ty.pop().unwrap();
+        args.pop();
+        args_with_ty.pop();
+        args_ty.pop();
 
         format!("(declare-fun {name} ({args_ty}) {ret_ty})\n(assert (forall ({args_with_ty}) (= ({name} {args}) {body})))\n", name = self.name, ret_ty = ret_ty, args = args, args_ty = args_ty, args_with_ty = args_with_ty, body = body)
     }
