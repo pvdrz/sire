@@ -153,7 +153,9 @@ impl<'tcx> Interpreter<'tcx> {
             StatementKind::StorageDead(local) => {
                 self.memory.remove(&Place::Base(PlaceBase::Local(local)));
             }
-            _ => unimplemented!(),
+            ref sk => {
+                return Err(eval_err!("StatementKind {:?} is unsupported", sk));
+            }
         };
         self.statement += 1;
         Ok(true)
@@ -192,7 +194,7 @@ impl<'tcx> Interpreter<'tcx> {
                     self.statement = 0;
                     Ok(true)
                 }
-                None => unimplemented!(),
+                None => Err(eval_err!("Call terminator does not assign")),
             },
             TerminatorKind::SwitchInt {
                 ref discr,
@@ -214,16 +216,8 @@ impl<'tcx> Interpreter<'tcx> {
                     interpreter.statement = 0;
                     interpreter.run()?;
 
-                    let value_expr = Expr::Value(match switch_ty.sty {
-                        TyKind::Bool => Value::Const(bytes, Ty::Bool),
-                        TyKind::Int(int_ty) => {
-                            Value::Const(bytes, Ty::Int(int_ty.bit_width().unwrap_or(64)))
-                        }
-                        TyKind::Uint(uint_ty) => {
-                            Value::Const(bytes, Ty::Uint(uint_ty.bit_width().unwrap_or(64)))
-                        }
-                        _ => unimplemented!(),
-                    });
+                    let value_expr =
+                        Expr::Value(Value::Const(bytes, transl_tykind(&switch_ty.sty)?));
 
                     let mut target_expr = interpreter
                         .memory
@@ -258,7 +252,7 @@ impl<'tcx> Interpreter<'tcx> {
                 self.statement = 0;
                 Ok(false)
             }
-            _ => unimplemented!(),
+            ref tk => Err(eval_err!("TerminatorKind {:?} is not supported", tk)),
         }
     }
 
@@ -275,7 +269,7 @@ impl<'tcx> Interpreter<'tcx> {
                 .ok_or_else(|| eval_err!("Place {:?} in reference is uninitialized", place))?
                 .clone(),
             Rvalue::Use(op) => self.eval_operand(op)?,
-            _ => unimplemented!(),
+            ref rv => return Err(eval_err!("Rvalue {:?} unsupported", rv)),
         };
 
         *self
