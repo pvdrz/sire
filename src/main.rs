@@ -38,7 +38,7 @@ impl Callbacks for SireCompilerCalls {
     fn after_analysis(&mut self, compiler: &interface::Compiler) -> bool {
         compiler.session().abort_if_errors();
         compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
-            let functions = Interpreter::from_tcx(tcx).eval_all().unwrap();
+            let functions = Interpreter::from_tcx(tcx).unwrap().eval_all().unwrap();
             for func in functions {
                 println!("{}", func.to_smt());
             }
