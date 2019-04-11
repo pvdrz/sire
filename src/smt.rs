@@ -36,7 +36,10 @@ impl ToSmt for FuncDef {
 
 impl ToSmt for Ty {
     fn to_smt(&self) -> String {
-        format!("(_ BitVec {})", self.size().unwrap())
+        match self {
+            Ty::Bool => "Bool".to_owned(),
+            _ => format!("(_ BitVec {})", self.size().unwrap())
+        }
     }
 }
 
