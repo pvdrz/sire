@@ -39,7 +39,6 @@ impl ToSmt for Ty {
         match self {
             Ty::Bool => "Bool".to_owned(),
             _ => format!("(_ BitVec {})", self.size().unwrap()),
-            _ => format!("(_ BitVec {})", self.size().unwrap())
         }
     }
 }
