@@ -38,9 +38,9 @@ impl<'tcx> Interpreter<'tcx> {
 
         let (entry_def_id, _) = tcx.entry_fn(LOCAL_CRATE).expect("no main function found!");
 
-        for (node_id, item) in &hir.krate().items {
+        for (hir_id, item) in &hir.krate().items {
             if let ItemKind::Fn(_, _, _, _) = item.node {
-                let def_id = hir.local_def_id(*node_id);
+                let def_id = hir.local_def_id_from_hir_id(*hir_id);
                 if def_id != entry_def_id {
                     let name = tcx.def_path(def_id).to_filename_friendly_no_crate();
                     let mir = tcx.optimized_mir(def_id);
@@ -307,7 +307,7 @@ impl<'tcx> Interpreter<'tcx> {
                             .get(def_id)
                             .ok_or_else(|| eval_err!("Function with DefId {:?} not found", def_id))?
                             .clone()),
-                        _ => Err(eval_err!("Unsupported TyKind")),
+                        _ => Err(eval_err!("Unsupported TyKind in constant {:?}", constant)),
                     })?,
             ),
         })
