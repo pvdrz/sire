@@ -1,4 +1,5 @@
 use crate::lang::*;
+use crate::analysis::find_loop;
 
 use std::collections::HashMap;
 
@@ -44,6 +45,9 @@ impl<'tcx> Interpreter<'tcx> {
                 if def_id != entry_def_id {
                     let name = tcx.def_path(def_id).to_filename_friendly_no_crate();
                     let mir = tcx.optimized_mir(def_id);
+                    if find_loop(mir).is_some() {
+                        return Err(eval_err!("The function {} contains loops", name));
+                    }
                     let mut args_ty = Vec::new();
                     for local_decl in mir.local_decls.iter().take(mir.arg_count + 1) {
                         args_ty.push(transl_tykind(&local_decl.ty.sty)?);
