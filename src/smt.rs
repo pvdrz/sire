@@ -38,6 +38,7 @@ impl ToSmt for Ty {
     fn to_smt(&self) -> String {
         match self {
             Ty::Bool => "Bool".to_owned(),
+            _ => format!("(_ BitVec {})", self.size().unwrap()),
             _ => format!("(_ BitVec {})", self.size().unwrap())
         }
     }
@@ -105,7 +106,6 @@ impl ToSmt for Expr {
                 es.iter().map(ToSmt::to_smt).collect::<Vec<_>>().join(" ")
             ),
             Expr::Switch(val, cs, bs) => {
-                println!("{:?}: {:?}", val, val.ty());
                 if val.ty() == Ty::Bool {
                     format!(
                         "(ite {} {} {})",
