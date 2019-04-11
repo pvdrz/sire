@@ -31,7 +31,7 @@ you can use this code to reason about the `sum` function using [z3](https://rise
 
 ## Coverage
 
-Right now, just an small set of Rust functions can be evaluated with Sire (basically any recursive function without side effects) and I am working to expand this. To be more specific, the following are allowed:
+Right now, just an small set of Rust functions can be evaluated with Sire (basically any recursive function without side effects nor loops) and I am working to expand this. To be more specific, the following are allowed:
 
 - Statements:
     - `Assign`
@@ -53,7 +53,7 @@ Right now, just an small set of Rust functions can be evaluated with Sire (basic
     - `Move` and `Copy`
     - `Constant` (only scalars)
 
-Additionaly, just the integer (both signed and unsigned) and boolean types are supported.
+Additionally, just the integer (both signed and unsigned) and boolean types are supported.
 
 If you have any suggestions or questions feel free to open an issue/write me an email :)
 
