@@ -151,7 +151,9 @@ impl<'tcx> Interpreter<'tcx> {
                     .insert(Place::Base(PlaceBase::Local(local)), Expr::Nil);
             }
             StatementKind::StorageDead(local) => {
-                self.memory.remove(&Place::Base(PlaceBase::Local(local)));
+                self.memory
+                    .remove(&Place::Base(PlaceBase::Local(local)))
+                    .ok_or_else(|| eval_err!("Double free error on local {:?}", local))?;
             }
             ref sk => {
                 return Err(eval_err!("StatementKind {:?} is unsupported", sk));
