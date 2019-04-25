@@ -1,6 +1,6 @@
-use crate::lang::*;
-use crate::analysis::find_loop;
 
+use crate::analysis::find_loop;
+use crate::lang::*;
 use std::collections::HashMap;
 
 use rustc::hir::def_id::DefId;

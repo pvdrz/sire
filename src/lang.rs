@@ -15,6 +15,15 @@ impl fmt::Display for FuncDef {
     }
 }
 
+impl FuncDef {
+    pub fn is_recursive(&self) -> bool {
+        self.body.contains(&Expr::Value(Value::Function(
+            self.name.clone(),
+            self.ty.clone(),
+        )))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Ty {
     Int(usize),
@@ -61,6 +70,20 @@ pub enum Expr {
 }
 
 impl Expr {
+    pub fn contains(&self, target: &Self) -> bool {
+        *self == *target
+            || match self {
+                Expr::Apply(e1, e2) => e1.contains(target) || e2.iter().any(|e| e.contains(target)),
+                Expr::Switch(e1, e2, e3) => {
+                    e1.contains(target)
+                        || e2.iter().any(|e| e.contains(target))
+                        || e3.iter().any(|e| e.contains(target))
+                }
+                Expr::BinaryOp(_, e1, e2) => e1.contains(target) || e2.contains(target),
+                _ => false,
+            }
+    }
+
     pub fn replace(&mut self, target: &Self, substitution: &Self) {
         if *self == *target {
             *self = substitution.clone();
