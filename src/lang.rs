@@ -1,10 +1,18 @@
 use rustc::mir::BinOp;
 
+use std::fmt;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FuncDef {
     pub name: String,
     pub body: Expr,
     pub ty: Ty,
+}
+
+impl fmt::Display for FuncDef {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "(defun {} {} {})", self.name, self.ty, self.body)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -21,6 +29,24 @@ impl Ty {
             Ty::Int(n) | Ty::Uint(n) => Some(*n),
             Ty::Bool => Some(8),
             Ty::Func(_) => None,
+        }
+    }
+}
+
+impl fmt::Display for Ty {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Ty::Int(n) => write!(f, "(int {})", n),
+            Ty::Uint(n) => write!(f, "(uint {})", n),
+            Ty::Bool => write!(f, "bool"),
+            Ty::Func(tys) => write!(
+                f,
+                "{}",
+                tys.iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
         }
     }
 }
@@ -81,6 +107,53 @@ impl Expr {
     }
 }
 
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Expr::Value(value) => write!(f, "{}", value),
+            Expr::Apply(func, args) => write!(
+                f,
+                "({} {})",
+                func,
+                args.iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+            Expr::BinaryOp(op, e1, e2) => {
+                let op_string = match op {
+                    BinOp::Add => "+",
+                    BinOp::Sub => "-",
+                    BinOp::Mul => "*",
+                    BinOp::Div => "/",
+                    BinOp::Rem => "%",
+                    BinOp::Eq => "=",
+                    BinOp::Lt => "<",
+                    BinOp::Le => "<=",
+                    BinOp::Ne => "!=",
+                    BinOp::Ge => ">=",
+                    BinOp::Gt => ">",
+                    _ => unreachable!(),
+                };
+                write!(f, "({} {} {})", op_string, e1, e2)
+            }
+            Expr::Switch(value, branches, targets) => write!(
+                f,
+                "(switch {} {} (else -> {}))",
+                value,
+                branches
+                    .iter()
+                    .zip(targets.iter())
+                    .map(|(b, t)| format!("({} -> {})", b, t))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                targets.last().unwrap()
+            ),
+            Expr::Nil => write!(f, "nil"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Value {
     Arg(usize, Ty),
@@ -96,5 +169,15 @@ impl Value {
             Value::Function(_, ty) => ty,
         }
         .clone()
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Value::Arg(n, _) => write!(f, "_{}", n),
+            Value::Const(value, _) => write!(f, "(const {})", value),
+            Value::Function(name, _) => write!(f, "{}", name),
+        }
     }
 }

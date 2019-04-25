@@ -40,6 +40,7 @@ impl Callbacks for SireCompilerCalls {
         compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
             let functions = Interpreter::from_tcx(tcx).unwrap().eval_all().unwrap();
             for func in functions {
+                println!("{}", func);
                 println!("{}", func.to_smt());
             }
         });
