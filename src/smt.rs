@@ -15,22 +15,28 @@ impl ToSmt for FuncDef {
 
         let ret_ty = args_vec.remove(0).to_smt();
 
-        let mut args = String::new();
         let mut args_with_ty = String::new();
-        let mut args_ty = String::new();
 
         for (i, ty) in args_vec.iter().enumerate() {
             let smt_ty = ty.to_smt();
-            args += &format!("x{} ", i + 1);
             args_with_ty += &format!("(x{} {}) ", i + 1, smt_ty);
-            args_ty += &format!("{} ", smt_ty);
         }
 
-        args.pop();
         args_with_ty.pop();
-        args_ty.pop();
 
-        format!("(declare-fun {name} ({args_ty}) {ret_ty})\n(assert (forall ({args_with_ty}) (= ({name} {args}) {body})))\n", name = self.name, ret_ty = ret_ty, args = args, args_ty = args_ty, args_with_ty = args_with_ty, body = body)
+        let def = if self.is_recursive() {
+            "define-fun-rec"
+        } else {
+            "define-fun"
+        };
+        format!(
+            "({def} {name} ({args_with_ty}) {ret_ty} {body})",
+            def = def,
+            name = self.name,
+            ret_ty = ret_ty,
+            args_with_ty = args_with_ty,
+            body = body
+        )
     }
 }
 
