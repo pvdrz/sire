@@ -91,7 +91,7 @@ impl<'tcx> Interpreter<'tcx> {
 
         self.memory.insert(
             Place::Base(PlaceBase::Local(Local::from_usize(0))),
-            Expr::Nil,
+            Expr::Uninitialized,
         );
 
         for (i, arg_ty) in args_ty.iter().enumerate().skip(1) {
@@ -109,7 +109,7 @@ impl<'tcx> Interpreter<'tcx> {
             if !live.contains(&local) {
                 self.memory.insert(
                     Place::Base(PlaceBase::Local(Local::from_usize(i))),
-                    Expr::Nil,
+                    Expr::Uninitialized,
                 );
             }
         }
@@ -179,7 +179,7 @@ impl<'tcx> Interpreter<'tcx> {
             }
             StatementKind::StorageLive(local) => {
                 self.memory
-                    .insert(Place::Base(PlaceBase::Local(local)), Expr::Nil);
+                    .insert(Place::Base(PlaceBase::Local(local)), Expr::Uninitialized);
             }
             StatementKind::StorageDead(local) => {
                 self.memory
@@ -221,7 +221,7 @@ impl<'tcx> Interpreter<'tcx> {
                     *self
                         .memory
                         .get_mut(place)
-                        .ok_or_else(|| eval_err!("Place {:?} is uninitialized", place))? =
+                        .ok_or_else(|| eval_err!("Place {:?} is not allocated", place))? =
                         Expr::Apply(Box::new(func_expr), args_expr);
                     self.block = Some(*block);
                     self.statement = 0;
@@ -255,7 +255,7 @@ impl<'tcx> Interpreter<'tcx> {
                     let mut target_expr = interpreter
                         .memory
                         .get(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
-                        .ok_or_else(|| eval_err!("Return place is uninitialized"))?
+                        .ok_or_else(|| eval_err!("Return place is not allocated"))?
                         .clone();
 
                     target_expr.replace(&discr_expr, &value_expr);
@@ -271,14 +271,14 @@ impl<'tcx> Interpreter<'tcx> {
                 targets_expr.push(
                     self.memory
                         .get(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
-                        .ok_or_else(|| eval_err!("Return place is uninitialized"))?
+                        .ok_or_else(|| eval_err!("Return place is not allocated"))?
                         .clone(),
                 );
 
                 *self
                     .memory
                     .get_mut(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
-                    .ok_or_else(|| eval_err!("Return place is uninitialized"))? =
+                    .ok_or_else(|| eval_err!("Return place is not allocated"))? =
                     Expr::Switch(Box::new(discr_expr), values_expr, targets_expr);
 
                 self.block = None;
@@ -299,7 +299,7 @@ impl<'tcx> Interpreter<'tcx> {
             Rvalue::Ref(_, BorrowKind::Shared, place) => self
                 .memory
                 .get(place)
-                .ok_or_else(|| eval_err!("Place {:?} in reference is uninitialized", place))?
+                .ok_or_else(|| eval_err!("Place {:?} in reference is not allocated", place))?
                 .clone(),
             Rvalue::Use(op) => self.eval_operand(op)?,
             ref rv => return Err(eval_err!("Rvalue {:?} unsupported", rv)),
@@ -308,7 +308,7 @@ impl<'tcx> Interpreter<'tcx> {
         *self
             .memory
             .get_mut(place)
-            .ok_or_else(|| eval_err!("Place {:?} in assignment is uninitialized", place))? = value;
+            .ok_or_else(|| eval_err!("Place {:?} in assignment is not allocated", place))? = value;
 
         Ok(())
     }
@@ -318,7 +318,7 @@ impl<'tcx> Interpreter<'tcx> {
             Operand::Move(place) | Operand::Copy(place) => self
                 .memory
                 .get(place)
-                .ok_or_else(|| eval_err!("Place {:?} in move/copy is uninitialized", place))?
+                .ok_or_else(|| eval_err!("Place {:?} in move/copy is not allocated", place))?
                 .clone(),
 
             Operand::Constant(constant) => Expr::Value(

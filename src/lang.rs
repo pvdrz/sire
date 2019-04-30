@@ -66,7 +66,7 @@ pub enum Expr {
     Apply(Box<Expr>, Vec<Expr>),
     BinaryOp(BinOp, Box<Expr>, Box<Expr>),
     Switch(Box<Expr>, Vec<Expr>, Vec<Expr>),
-    Nil,
+    Uninitialized,
 }
 
 impl Expr {
@@ -125,7 +125,7 @@ impl Expr {
                 _ => e1.ty(),
             },
             Expr::Switch(_, _, es) => es.first().unwrap().ty().clone(),
-            Expr::Nil => unreachable!(),
+            Expr::Uninitialized => unreachable!(),
         }
     }
 }
@@ -172,7 +172,7 @@ impl fmt::Display for Expr {
                     .join(" "),
                 targets.last().unwrap()
             ),
-            Expr::Nil => write!(f, "nil"),
+            Expr::Uninitialized => write!(f, "uninitialized"),
         }
     }
 }
