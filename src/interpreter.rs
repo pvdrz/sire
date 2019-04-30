@@ -141,11 +141,15 @@ impl<'tcx> Interpreter<'tcx> {
             .remove(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
             .ok_or_else(|| eval_err!("Double free error on return place"))?;
 
-        Ok(FuncDef {
-            body,
-            name: name.clone(),
-            ty: Ty::Func(args_ty.clone()),
-        })
+        if self.memory.is_empty() {
+            Ok(FuncDef {
+                body,
+                name: name.clone(),
+                ty: Ty::Func(args_ty.clone()),
+            })
+        } else {
+            Err(eval_err!("Memory is not empty after execution"))
+        }
     }
 
     fn run(&mut self) -> EvalResult {
