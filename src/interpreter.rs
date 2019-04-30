@@ -101,6 +101,19 @@ impl<'tcx> Interpreter<'tcx> {
             );
         }
 
+        let locals_len = self.mirs.get(&def_id).unwrap().local_decls.len();
+        let (live, dead) = self.check_storages(&def_id);
+
+        for i in args_ty.len()..locals_len {
+            let local = Local::from_usize(i);
+            if !live.contains(&local) {
+                self.memory.insert(
+                    Place::Base(PlaceBase::Local(Local::from_usize(i))),
+                    Expr::Nil,
+                );
+            }
+        }
+
         self.def_id = Some(def_id);
         self.block = Some(BasicBlock::from_u32(0));
 
@@ -111,6 +124,16 @@ impl<'tcx> Interpreter<'tcx> {
             self.memory
                 .remove(&place)
                 .ok_or_else(|| eval_err!("Double free error on place {:?}", place))?;
+        }
+
+        for i in args_ty.len()..locals_len {
+            let local = Local::from_usize(i);
+            if !dead.contains(&local) {
+                let place = Place::Base(PlaceBase::Local(local));
+                self.memory
+                    .remove(&place)
+                    .ok_or_else(|| eval_err!("Double free error on place {:?}", place))?;
+            }
         }
 
         let body = self
@@ -315,6 +338,25 @@ impl<'tcx> Interpreter<'tcx> {
                     })?,
             ),
         })
+    }
+
+    fn check_storages(&self, def_id: &DefId) -> (Vec<Local>, Vec<Local>) {
+        let mut live = Vec::new();
+        let mut dead = Vec::new();
+
+        let mir = self.mirs.get(def_id).unwrap();
+
+        for block in mir.basic_blocks() {
+            for statement in &block.statements {
+                match statement.kind {
+                    StatementKind::StorageLive(local) => live.push(local),
+                    StatementKind::StorageDead(local) => dead.push(local),
+                    _ => (),
+                }
+            }
+        }
+
+        (live, dead)
     }
 }
 

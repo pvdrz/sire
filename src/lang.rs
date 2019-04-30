@@ -199,7 +199,7 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Value::Arg(n, _) => write!(f, "_{}", n),
-            Value::Const(value, _) => write!(f, "(const {})", value),
+            Value::Const(value, ty) => write!(f, "(const {} {})", ty, value),
             Value::Function(name, _) => write!(f, "{}", name),
         }
     }
