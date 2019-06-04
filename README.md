@@ -1,7 +1,7 @@
 # Sire
 Sire (which is a WIP) intends to be an small symbolic evaluator for Rust's MIR.
 
-## How?
+## How does it work?
 
 Sire takes the optimized MIR of your code and evaluates its functions into small [expressions](https://github.com/christianpoveda/sire/blob/8b8a9f94398ac68b3b2b2b902c7980b3f0d7e647/src/interpreter.rs#L10). It also allows to export such expressions to the [smt-lib](http://smtlib.cs.uiowa.edu/) language, then you can reason more about them using a theorem prover.
 So for example if you have a file `some_code.rs` containing:
@@ -57,3 +57,22 @@ Additionally, just the integer (both signed and unsigned) and boolean types are 
 
 If you have any suggestions or questions feel free to open an issue/write me an email :)
 
+## Installing
+
+This project depends on nightly Rust, the preferred (only?) method is using
+[`rustup`](https://rustup.rs/). Please check the `rustup` documentation on how
+to get nightly. Now you will need to clone this repository:
+
+```bash
+$ git clone https://github.com/christianpoveda/sire 
+```
+
+Now to execute a `code.rs` file using `sire`, run the following inside the
+repository folder
+
+```bash
+cargo run code.rs -O
+```
+
+This should throw a symbolic representation of every function in `code.rs` and
+its `smt-lib` counterpart.
