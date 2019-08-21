@@ -5,17 +5,13 @@ extern crate rustc_driver;
 extern crate rustc_interface;
 extern crate syntax;
 
-mod analysis;
-mod eval;
-mod sir;
 mod smt;
 
-use rustc::hir::def_id::LOCAL_CRATE;
-use rustc::hir::ItemKind;
+use rustc::hir::{def_id::LOCAL_CRATE, ItemKind};
 use rustc_driver::{report_ices_to_stderr_if_any, run_compiler, Callbacks, Compilation};
 use rustc_interface::interface;
 
-use crate::eval::Evaluator;
+use sire::eval::Evaluator;
 use crate::smt::ToSmt;
 
 fn find_sysroot() -> String {

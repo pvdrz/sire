@@ -1,7 +1,7 @@
 use rustc::hir::def_id::DefId;
 use rustc::mir::BinOp;
 
-use crate::sir::*;
+use sire::sir::*;
 
 pub trait ToSmt {
     fn to_smt(&self) -> String;
