@@ -8,3 +8,6 @@ edition = "2018"
 
 [dependencies]
 sire = { path = "../sire" }
+
+[dev-dependencies]
+rustc = {path = "../../librustc"}
