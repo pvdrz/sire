@@ -41,7 +41,7 @@ impl<'tcx> Evaluator<'tcx> {
             .iter()
             .take(mir.arg_count + 1)
             .map(|ld| self.transl_tykind(&ld.ty.sty))
-            .collect::<InterpResult<Vec<Ty>>>()?;
+            .collect::<InterpResult<'_, Vec<Ty>>>()?;
 
         self.memory
             .insert(Local::from_usize(0).into(), Expr::Uninitialized);
@@ -85,7 +85,7 @@ impl<'tcx> Evaluator<'tcx> {
         for i in args_ty.len()..locals_len {
             let local = Local::from_usize(i);
             if !dead.contains(&local) {
-                let place: Place = local.into();
+                let place: Place<'_> = local.into();
                 self.memory.remove(&place).ok_or_else(|| {
                     err_unsup_format!("Double free error on place {:?} local", place)
                 })?;
@@ -272,7 +272,7 @@ impl<'tcx> Evaluator<'tcx> {
         Ok(())
     }
 
-    fn eval_operand(&self, operand: &Operand) -> InterpResult<'tcx, Expr> {
+    fn eval_operand(&self, operand: &Operand<'tcx>) -> InterpResult<'tcx, Expr> {
         Ok(match operand {
             Operand::Move(place) | Operand::Copy(place) => self
                 .memory
@@ -283,10 +283,11 @@ impl<'tcx> Evaluator<'tcx> {
                 .clone(),
 
             Operand::Constant(constant) => {
-                let ty = self.transl_tykind(&constant.ty.sty)?;
+                let tykind = &constant.literal.ty.sty;
+                let ty = self.transl_tykind(tykind)?;
                 Expr::Value(match ty {
-                    Ty::Func(_) => match constant.ty.sty {
-                        TyKind::FnDef(def_id, _) => Value::Function(def_id, ty),
+                    Ty::Func(_) => match tykind {
+                        TyKind::FnDef(def_id, _) => Value::Function(*def_id, ty),
                         _ => unreachable!(),
                     },
 
@@ -323,7 +324,7 @@ impl<'tcx> Evaluator<'tcx> {
         (live, dead)
     }
 
-    fn transl_tykind(&self, ty_kind: &TyKind) -> InterpResult<'tcx, Ty> {
+    fn transl_tykind(&self, ty_kind: &TyKind<'tcx>) -> InterpResult<'tcx, Ty> {
         match ty_kind {
             TyKind::Bool => Ok(Ty::Bool),
             TyKind::Int(int_ty) => Ok(Ty::Int(int_ty.bit_width().unwrap_or(64))),
@@ -334,7 +335,7 @@ impl<'tcx> Evaluator<'tcx> {
                 .local_decls
                 .iter()
                 .map(|ld| self.transl_tykind(&ld.ty.sty))
-                .collect::<InterpResult<Vec<Ty>>>()
+                .collect::<InterpResult<'_, Vec<Ty>>>()
                 .map(|args_ty| Ty::Func(args_ty)),
             _ => Err(err_unsup_format!("Unsupported TyKind {:?}", ty_kind).into()),
         }

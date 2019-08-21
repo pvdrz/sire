@@ -11,7 +11,7 @@ pub struct FuncDef {
 }
 
 impl fmt::Display for FuncDef {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "(defun {:?} {} {})", self.def_id, self.ty, self.body)
     }
 }
@@ -42,7 +42,7 @@ impl Ty {
 }
 
 impl fmt::Display for Ty {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Ty::Int(n) => write!(f, "(int {})", n),
             Ty::Uint(n) => write!(f, "(uint {})", n),
@@ -130,7 +130,7 @@ impl Expr {
 }
 
 impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expr::Value(value) => write!(f, "{}", value),
             Expr::Apply(func, args) => write!(
@@ -195,7 +195,7 @@ impl Value {
 }
 
 impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Arg(n, _) => write!(f, "_{}", n),
             Value::Const(value, ty) => write!(f, "(const {} {})", ty, value),
