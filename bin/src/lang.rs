@@ -1,26 +1,25 @@
-use rustc::mir::BinOp;
-
 use std::fmt;
+
+use rustc::hir::def_id::DefId;
+use rustc::mir::BinOp;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FuncDef {
-    pub name: String,
+    pub def_id: DefId,
     pub body: Expr,
     pub ty: Ty,
 }
 
 impl fmt::Display for FuncDef {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "(defun {} {} {})", self.name, self.ty, self.body)
+        write!(f, "(defun {:?} {} {})", self.def_id, self.ty, self.body)
     }
 }
 
 impl FuncDef {
     pub fn is_recursive(&self) -> bool {
-        self.body.contains(&Expr::Value(Value::Function(
-            self.name.clone(),
-            self.ty.clone(),
-        )))
+        self.body
+            .contains(&Expr::Value(Value::Function(self.def_id, self.ty.clone())))
     }
 }
 
@@ -181,7 +180,7 @@ impl fmt::Display for Expr {
 pub enum Value {
     Arg(usize, Ty),
     Const(u128, Ty),
-    Function(String, Ty),
+    Function(DefId, Ty),
 }
 
 impl Value {
@@ -200,7 +199,7 @@ impl fmt::Display for Value {
         match self {
             Value::Arg(n, _) => write!(f, "_{}", n),
             Value::Const(value, ty) => write!(f, "(const {} {})", ty, value),
-            Value::Function(name, _) => write!(f, "{}", name),
+            Value::Function(def_id, _) => write!(f, "{:?}", def_id),
         }
     }
 }

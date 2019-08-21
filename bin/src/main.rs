@@ -10,11 +10,13 @@ mod interpreter;
 mod lang;
 mod smt;
 
-use crate::interpreter::Interpreter;
-use crate::smt::ToSmt;
-
+use rustc::hir::def_id::LOCAL_CRATE;
+use rustc::hir::ItemKind;
 use rustc_driver::{report_ices_to_stderr_if_any, run_compiler, Callbacks, Compilation};
 use rustc_interface::interface;
+
+use crate::interpreter::Interpreter;
+use crate::smt::ToSmt;
 
 fn find_sysroot() -> String {
     let home = option_env!("RUSTUP_HOME").or(option_env!("MULTIRUST_HOME"));
@@ -38,7 +40,22 @@ impl Callbacks for SireCompilerCalls {
     fn after_analysis(&mut self, compiler: &interface::Compiler) -> Compilation {
         compiler.session().abort_if_errors();
         compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
-            let functions = Interpreter::from_tcx(tcx).unwrap().eval_all().unwrap();
+            let mut interpreter = Interpreter::from_tcx(tcx).unwrap();
+            let mut functions = Vec::new();
+
+            let (main_id, _) = tcx.entry_fn(LOCAL_CRATE).expect("no main function found!");
+
+            let hir = tcx.hir();
+
+            for (&hir_id, item) in &hir.krate().items {
+                if let ItemKind::Fn(_, _, _, _) = item.node {
+                    let def_id = hir.local_def_id(hir_id);
+                    if def_id != main_id {
+                        functions.push(interpreter.eval_mir(def_id).unwrap());
+                    }
+                }
+            }
+
             for func in functions {
                 println!("{}", func);
                 println!("{}", func.to_smt());

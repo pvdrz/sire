@@ -1,5 +1,7 @@
-use crate::lang::*;
+use rustc::hir::def_id::DefId;
 use rustc::mir::BinOp;
+
+use crate::lang::*;
 
 pub trait ToSmt {
     fn to_smt(&self) -> String;
@@ -32,7 +34,7 @@ impl ToSmt for FuncDef {
         format!(
             "({def} {name} ({args_with_ty}) {ret_ty} {body})",
             def = def,
-            name = self.name,
+            name = self.def_id.to_smt(),
             ret_ty = ret_ty,
             args_with_ty = args_with_ty,
             body = body
@@ -49,6 +51,12 @@ impl ToSmt for Ty {
     }
 }
 
+impl ToSmt for DefId {
+    fn to_smt(&self) -> String {
+        format!("func_{}_{}", self.krate.as_u32(), self.index.as_u32())
+    }
+}
+
 impl ToSmt for Value {
     fn to_smt(&self) -> String {
         match self {
@@ -57,7 +65,7 @@ impl ToSmt for Value {
                 Ty::Bool => format!("{}", *b != 0),
                 ty => format!("(_ bv{} {})", b, ty.size().unwrap()),
             },
-            Value::Function(n, _) => n.to_string(),
+            Value::Function(d, _) => d.to_smt(),
         }
     }
 }

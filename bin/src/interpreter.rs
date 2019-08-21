@@ -1,84 +1,47 @@
-use crate::analysis::find_loop;
-use crate::lang::*;
 use std::collections::HashMap;
 
 use rustc::hir::def_id::DefId;
-use rustc::hir::def_id::LOCAL_CRATE;
-use rustc::hir::ItemKind;
-use rustc::mir::interpret::{ConstValue, InterpError, InterpResult};
+use rustc::mir::interpret::{ConstValue, InterpResult};
 use rustc::mir::*;
-use rustc::ty::layout::Size;
-use rustc::ty::{TyCtxt, TyKind};
+use rustc::ty::{layout::Size, TyCtxt, TyKind};
 use rustc::{err_unsup, err_unsup_format};
+
+use crate::analysis::find_loop;
+use crate::lang::*;
 
 #[derive(Clone)]
 pub struct Interpreter<'tcx> {
     block: Option<BasicBlock>,
     statement: usize,
     memory: HashMap<Place<'tcx>, Expr>,
-    funcs: HashMap<DefId, Value>,
-    mirs: HashMap<DefId, &'tcx Body<'tcx>>,
     def_id: Option<DefId>,
+    tcx: TyCtxt<'tcx>,
 }
 
 impl<'tcx> Interpreter<'tcx> {
     pub fn from_tcx(tcx: TyCtxt<'tcx>) -> InterpResult<'tcx, Self> {
-        let hir = tcx.hir();
-        let mut mirs = HashMap::new();
-        let mut funcs = HashMap::new();
-        let mut def_ids = Vec::new();
-
-        let (entry_def_id, _) = tcx.entry_fn(LOCAL_CRATE).expect("no main function found!");
-
-        for (hir_id, item) in &hir.krate().items {
-            if let ItemKind::Fn(_, _, _, _) = item.node {
-                let def_id = hir.local_def_id(*hir_id);
-                if def_id != entry_def_id {
-                    let name = tcx.def_path(def_id).to_filename_friendly_no_crate();
-                    let mir = tcx.optimized_mir(def_id);
-                    if find_loop(mir).is_some() {
-                        return Err(
-                            err_unsup_format!("The function {} contains loops", name).into()
-                        );
-                    }
-                    let mut args_ty = Vec::new();
-                    for local_decl in mir.local_decls.iter().take(mir.arg_count + 1) {
-                        args_ty.push(transl_tykind(&local_decl.ty.sty)?);
-                    }
-
-                    mirs.insert(def_id, mir);
-                    funcs.insert(def_id, Value::Function(name, Ty::Func(args_ty)));
-                    def_ids.push(def_id);
-                }
-            }
-        }
-
         Ok(Interpreter {
             block: None,
             statement: 0,
             memory: HashMap::new(),
-            funcs,
-            mirs,
             def_id: None,
+            tcx,
         })
     }
 
-    pub fn eval_all(&mut self) -> InterpResult<'tcx, Vec<FuncDef>> {
-        let mut func_defs = Vec::new();
-        let def_ids = self.mirs.keys().cloned().collect::<Vec<DefId>>();
-        for def_id in def_ids {
-            func_defs.push(self.eval_mir(def_id)?);
-        }
-        Ok(func_defs)
-    }
-
     pub fn eval_mir(&mut self, def_id: DefId) -> InterpResult<'tcx, FuncDef> {
-        let (name, args_ty) = match self.funcs.get(&def_id).ok_or_else(|| {
-            InterpError::from(err_unsup_format!("Mir wit DefId {:?} not found", def_id).into())
-        })? {
-            Value::Function(name, Ty::Func(args_ty)) => (name.clone(), args_ty.clone()),
-            _ => unreachable!(),
-        };
+        let mir = self.tcx.optimized_mir(def_id);
+
+        if find_loop(mir).is_some() {
+            return Err(err_unsup_format!("The function {:?} contains loops", def_id).into());
+        }
+
+        let args_ty = mir
+            .local_decls
+            .iter()
+            .take(mir.arg_count + 1)
+            .map(|ld| self.transl_tykind(&ld.ty.sty))
+            .collect::<InterpResult<Vec<Ty>>>()?;
 
         self.memory
             .insert(Local::from_usize(0).into(), Expr::Uninitialized);
@@ -93,7 +56,7 @@ impl<'tcx> Interpreter<'tcx> {
             );
         }
 
-        let locals_len = self.mirs.get(&def_id).unwrap().local_decls.len();
+        let locals_len = mir.local_decls.len();
         let (live, dead) = self.check_storages(&def_id);
 
         for i in args_ty.len()..locals_len {
@@ -114,18 +77,18 @@ impl<'tcx> Interpreter<'tcx> {
                 base: PlaceBase::Local(Local::from_usize(i)),
                 projection: None,
             };
-            self.memory
-                .remove(&place)
-                .ok_or_else(|| err_unsup_format!("Double free error on place {:?}", place))?;
+            self.memory.remove(&place).ok_or_else(|| {
+                err_unsup_format!("Double free error on place {:?} argument", place)
+            })?;
         }
 
         for i in args_ty.len()..locals_len {
             let local = Local::from_usize(i);
             if !dead.contains(&local) {
                 let place: Place = local.into();
-                self.memory
-                    .remove(&place)
-                    .ok_or_else(|| err_unsup_format!("Double free error on place {:?}", place))?;
+                self.memory.remove(&place).ok_or_else(|| {
+                    err_unsup_format!("Double free error on place {:?} local", place)
+                })?;
             }
         }
 
@@ -137,7 +100,7 @@ impl<'tcx> Interpreter<'tcx> {
         if self.memory.is_empty() {
             Ok(FuncDef {
                 body,
-                name: name.clone(),
+                def_id,
                 ty: Ty::Func(args_ty.clone()),
             })
         } else {
@@ -152,9 +115,8 @@ impl<'tcx> Interpreter<'tcx> {
 
     fn step(&mut self) -> InterpResult<'tcx, bool> {
         let block_data = self
-            .mirs
-            .get(&self.def_id.expect("Bug: DefId should be some"))
-            .expect("Bug: Mir should exist")
+            .tcx
+            .optimized_mir(self.def_id.expect("Bug: DefId should be some"))
             .basic_blocks()
             .get(self.block.expect("Bug: Block should be some"))
             .ok_or_else(|| err_unsup_format!("Basic block not found"))?;
@@ -242,7 +204,7 @@ impl<'tcx> Interpreter<'tcx> {
                     interpreter.run()?;
 
                     let value_expr =
-                        Expr::Value(Value::Const(bytes, transl_tykind(&switch_ty.sty)?));
+                        Expr::Value(Value::Const(bytes, self.transl_tykind(&switch_ty.sty)?));
 
                     let mut target_expr = interpreter
                         .memory
@@ -320,31 +282,25 @@ impl<'tcx> Interpreter<'tcx> {
                 })?
                 .clone(),
 
-            Operand::Constant(constant) => Expr::Value(
-                transl_tykind(&constant.ty.sty)
-                    .and_then(|ty| match constant.literal.val {
-                        ConstValue::Scalar(scalar) => Ok(Value::Const(
+            Operand::Constant(constant) => {
+                let ty = self.transl_tykind(&constant.ty.sty)?;
+                Expr::Value(match ty {
+                    Ty::Func(_) => match constant.ty.sty {
+                        TyKind::FnDef(def_id, _) => Value::Function(def_id, ty),
+                        _ => unreachable!(),
+                    },
+
+                    _ => match constant.literal.val {
+                        ConstValue::Scalar(scalar) => Value::Const(
                             scalar
                                 .to_bits(Size::from_bits(ty.size().unwrap() as u64))
                                 .unwrap(),
                             ty,
-                        )),
-                        _ => Err(err_unsup_format!("Unsupported ConstValue").into()),
-                    })
-                    .or_else(|_| match constant.ty.sty {
-                        TyKind::FnDef(ref def_id, _) => Ok(self
-                            .funcs
-                            .get(def_id)
-                            .ok_or_else(|| {
-                                err_unsup_format!("Function with DefId {:?} not found", def_id)
-                            })?
-                            .clone()),
-                        _ => Err(err_unsup_format!(
-                            "Unsupported TyKind in constant {:?}",
-                            constant
-                        )),
-                    })?,
-            ),
+                        ),
+                        _ => return Err(err_unsup_format!("Unsupported ConstValue").into()),
+                    },
+                })
+            }
         })
     }
 
@@ -352,7 +308,7 @@ impl<'tcx> Interpreter<'tcx> {
         let mut live = Vec::new();
         let mut dead = Vec::new();
 
-        let mir = self.mirs.get(def_id).unwrap();
+        let mir = self.tcx.optimized_mir(*def_id);
 
         for block in mir.basic_blocks() {
             for statement in &block.statements {
@@ -366,13 +322,21 @@ impl<'tcx> Interpreter<'tcx> {
 
         (live, dead)
     }
-}
 
-fn transl_tykind<'tcx>(ty_kind: &TyKind) -> InterpResult<'tcx, Ty> {
-    match ty_kind {
-        TyKind::Bool => Ok(Ty::Bool),
-        TyKind::Int(int_ty) => Ok(Ty::Int(int_ty.bit_width().unwrap_or(64))),
-        TyKind::Uint(uint_ty) => Ok(Ty::Uint(uint_ty.bit_width().unwrap_or(64))),
-        _ => Err(err_unsup_format!("Unsupported TyKind").into()),
+    fn transl_tykind(&self, ty_kind: &TyKind) -> InterpResult<'tcx, Ty> {
+        match ty_kind {
+            TyKind::Bool => Ok(Ty::Bool),
+            TyKind::Int(int_ty) => Ok(Ty::Int(int_ty.bit_width().unwrap_or(64))),
+            TyKind::Uint(uint_ty) => Ok(Ty::Uint(uint_ty.bit_width().unwrap_or(64))),
+            TyKind::FnDef(def_id, _) => self
+                .tcx
+                .optimized_mir(*def_id)
+                .local_decls
+                .iter()
+                .map(|ld| self.transl_tykind(&ld.ty.sty))
+                .collect::<InterpResult<Vec<Ty>>>()
+                .map(|args_ty| Ty::Func(args_ty)),
+            _ => Err(err_unsup_format!("Unsupported TyKind {:?}", ty_kind).into()),
+        }
     }
 }
