@@ -26,12 +26,12 @@ pub struct Interpreter<'tcx> {
     statement: usize,
     memory: HashMap<Place<'tcx>, Expr>,
     funcs: HashMap<DefId, Value>,
-    mirs: HashMap<DefId, &'tcx Mir<'tcx>>,
+    mirs: HashMap<DefId, &'tcx Body<'tcx>>,
     def_id: Option<DefId>,
 }
 
 impl<'tcx> Interpreter<'tcx> {
-    pub fn from_tcx<'a, 'gcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>) -> EvalResult<Self> {
+    pub fn from_tcx(tcx: TyCtxt<'tcx>) -> EvalResult<Self> {
         let hir = tcx.hir();
         let mut mirs = HashMap::new();
         let mut funcs = HashMap::new();
@@ -41,7 +41,7 @@ impl<'tcx> Interpreter<'tcx> {
 
         for (hir_id, item) in &hir.krate().items {
             if let ItemKind::Fn(_, _, _, _) = item.node {
-                let def_id = hir.local_def_id_from_hir_id(*hir_id);
+                let def_id = hir.local_def_id(*hir_id);
                 if def_id != entry_def_id {
                     let name = tcx.def_path(def_id).to_filename_friendly_no_crate();
                     let mir = tcx.optimized_mir(def_id);
@@ -89,14 +89,14 @@ impl<'tcx> Interpreter<'tcx> {
             _ => unreachable!(),
         };
 
-        self.memory.insert(
-            Place::Base(PlaceBase::Local(Local::from_usize(0))),
-            Expr::Uninitialized,
-        );
+        self.memory.insert(Local::from_usize(0).into(), Expr::Uninitialized);
 
         for (i, arg_ty) in args_ty.iter().enumerate().skip(1) {
             self.memory.insert(
-                Place::Base(PlaceBase::Local(Local::from_usize(i))),
+            Place {
+                base: PlaceBase::Local(Local::from_usize(i)),
+                projection: None
+            },
                 Expr::Value(Value::Arg(i, arg_ty.clone())),
             );
         }
@@ -107,10 +107,7 @@ impl<'tcx> Interpreter<'tcx> {
         for i in args_ty.len()..locals_len {
             let local = Local::from_usize(i);
             if !live.contains(&local) {
-                self.memory.insert(
-                    Place::Base(PlaceBase::Local(Local::from_usize(i))),
-                    Expr::Uninitialized,
-                );
+                self.memory.insert( Local::from_usize(i).into(), Expr::Uninitialized);
             }
         }
 
@@ -120,7 +117,10 @@ impl<'tcx> Interpreter<'tcx> {
         self.run()?;
 
         for i in 1usize..args_ty.len() {
-            let place = Place::Base(PlaceBase::Local(Local::from_usize(i)));
+            let place = Place {
+                base: PlaceBase::Local(Local::from_usize(i)),
+                projection: None
+            };
             self.memory
                 .remove(&place)
                 .ok_or_else(|| eval_err!("Double free error on place {:?}", place))?;
@@ -129,7 +129,7 @@ impl<'tcx> Interpreter<'tcx> {
         for i in args_ty.len()..locals_len {
             let local = Local::from_usize(i);
             if !dead.contains(&local) {
-                let place = Place::Base(PlaceBase::Local(local));
+                let place: Place = local.into();
                 self.memory
                     .remove(&place)
                     .ok_or_else(|| eval_err!("Double free error on place {:?}", place))?;
@@ -138,7 +138,7 @@ impl<'tcx> Interpreter<'tcx> {
 
         let body = self
             .memory
-            .remove(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
+            .remove(&Local::from_usize(0).into())
             .ok_or_else(|| eval_err!("Double free error on return place"))?;
 
         if self.memory.is_empty() {
@@ -178,12 +178,11 @@ impl<'tcx> Interpreter<'tcx> {
                 self.eval_rvalue_into_place(rvalue, place)?;
             }
             StatementKind::StorageLive(local) => {
-                self.memory
-                    .insert(Place::Base(PlaceBase::Local(local)), Expr::Uninitialized);
+                self.memory.insert(local.into(), Expr::Uninitialized);
             }
             StatementKind::StorageDead(local) => {
                 self.memory
-                    .remove(&Place::Base(PlaceBase::Local(local)))
+                    .remove(&local.into())
                     .ok_or_else(|| eval_err!("Double free error on local {:?}", local))?;
             }
             ref sk => {
@@ -254,7 +253,7 @@ impl<'tcx> Interpreter<'tcx> {
 
                     let mut target_expr = interpreter
                         .memory
-                        .get(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
+                        .get(&Local::from_usize(0).into())
                         .ok_or_else(|| eval_err!("Return place is not allocated"))?
                         .clone();
 
@@ -270,14 +269,14 @@ impl<'tcx> Interpreter<'tcx> {
 
                 targets_expr.push(
                     self.memory
-                        .get(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
+                        .get(&Local::from_usize(0).into())
                         .ok_or_else(|| eval_err!("Return place is not allocated"))?
                         .clone(),
                 );
 
                 *self
                     .memory
-                    .get_mut(&Place::Base(PlaceBase::Local(Local::from_u32(0))))
+                    .get_mut(&Local::from_usize(0).into())
                     .ok_or_else(|| eval_err!("Return place is not allocated"))? =
                     Expr::Switch(Box::new(discr_expr), values_expr, targets_expr);
 

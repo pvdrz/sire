@@ -13,7 +13,7 @@ mod smt;
 use crate::interpreter::Interpreter;
 use crate::smt::ToSmt;
 
-use rustc_driver::{report_ices_to_stderr_if_any, run_compiler, Callbacks};
+use rustc_driver::{report_ices_to_stderr_if_any, run_compiler, Callbacks, Compilation};
 use rustc_interface::interface;
 
 fn find_sysroot() -> String {
@@ -31,11 +31,11 @@ fn find_sysroot() -> String {
 struct SireCompilerCalls;
 
 impl Callbacks for SireCompilerCalls {
-    fn after_parsing(&mut self, _compiler: &interface::Compiler) -> bool {
-        true
+    fn after_parsing(&mut self, _compiler: &interface::Compiler) -> Compilation {
+        Compilation::Continue
     }
 
-    fn after_analysis(&mut self, compiler: &interface::Compiler) -> bool {
+    fn after_analysis(&mut self, compiler: &interface::Compiler) -> Compilation {
         compiler.session().abort_if_errors();
         compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
             let functions = Interpreter::from_tcx(tcx).unwrap().eval_all().unwrap();
@@ -46,7 +46,7 @@ impl Callbacks for SireCompilerCalls {
         });
 
         compiler.session().abort_if_errors();
-        false
+        Compilation::Stop
     }
 }
 

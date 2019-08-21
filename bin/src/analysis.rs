@@ -1,11 +1,11 @@
 use rustc::mir::*;
 
-pub fn find_loop<'tcx>(mir: &'tcx Mir<'tcx>) -> Option<Vec<BasicBlock>> {
+pub fn find_loop<'tcx>(mir: &'tcx Body<'tcx>) -> Option<Vec<BasicBlock>> {
     get_loop_start(mir, BasicBlock::from_u32(0), Vec::new())
 }
 
 fn get_loop_start<'tcx>(
-    mir: &'tcx Mir<'tcx>,
+    mir: &'tcx Body<'tcx>,
     block: BasicBlock,
     mut visited: Vec<BasicBlock>,
 ) -> Option<Vec<BasicBlock>> {
