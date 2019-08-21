@@ -19,14 +19,14 @@ pub struct Evaluator<'tcx> {
 }
 
 impl<'tcx> Evaluator<'tcx> {
-    pub fn from_tcx(tcx: TyCtxt<'tcx>) -> InterpResult<'tcx, Self> {
-        Ok(Evaluator {
+    pub fn from_tcx(tcx: TyCtxt<'tcx>) -> Self {
+        Evaluator {
             block: None,
             statement: 0,
             memory: HashMap::new(),
             def_id: None,
             tcx,
-        })
+        }
     }
 
     pub fn eval_mir(&mut self, def_id: DefId) -> InterpResult<'tcx, FuncDef> {
