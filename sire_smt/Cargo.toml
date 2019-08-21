@@ -1,10 +1,10 @@
 [package]
-name = "sire-run"
+name = "sire-smt"
 version = "0.1.0"
 authors = ["Christian Poveda <christianpoveda@protonmail.com>"]
 edition = "2018"
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [dependencies]
-rustc-workspace-hack = "1.0.0"
 sire = { path = "../sire" }
-sire-smt = { path = "../sire_smt" }

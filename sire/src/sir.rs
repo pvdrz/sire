@@ -1,7 +1,7 @@
 use std::fmt;
 
-use rustc::hir::def_id::DefId;
-use rustc::mir::BinOp;
+pub use rustc::hir::def_id::DefId;
+pub use rustc::mir::BinOp;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FuncDef {

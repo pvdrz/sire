@@ -5,14 +5,13 @@ extern crate rustc_driver;
 extern crate rustc_interface;
 extern crate syntax;
 
-mod smt;
 
 use rustc::hir::{def_id::LOCAL_CRATE, ItemKind};
 use rustc_driver::{report_ices_to_stderr_if_any, run_compiler, Callbacks, Compilation};
 use rustc_interface::interface;
 
 use sire::eval::Evaluator;
-use crate::smt::ToSmt;
+use sire_smt::smtlib::ToSmtlib;
 
 fn find_sysroot() -> String {
     let home = option_env!("RUSTUP_HOME").or(option_env!("MULTIRUST_HOME"));
@@ -54,7 +53,7 @@ impl Callbacks for SireCompilerCalls {
 
             for func in functions {
                 println!("{}", func);
-                println!("{}", func.to_smt());
+                println!("{}", func.to_smtlib());
             }
         });
 
