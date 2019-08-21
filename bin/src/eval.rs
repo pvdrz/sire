@@ -7,10 +7,10 @@ use rustc::ty::{layout::Size, TyCtxt, TyKind};
 use rustc::{err_unsup, err_unsup_format};
 
 use crate::analysis::find_loop;
-use crate::lang::*;
+use crate::sir::*;
 
 #[derive(Clone)]
-pub struct Interpreter<'tcx> {
+pub struct Evaluator<'tcx> {
     block: Option<BasicBlock>,
     statement: usize,
     memory: HashMap<Place<'tcx>, Expr>,
@@ -18,9 +18,9 @@ pub struct Interpreter<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
-impl<'tcx> Interpreter<'tcx> {
+impl<'tcx> Evaluator<'tcx> {
     pub fn from_tcx(tcx: TyCtxt<'tcx>) -> InterpResult<'tcx, Self> {
-        Ok(Interpreter {
+        Ok(Evaluator {
             block: None,
             statement: 0,
             memory: HashMap::new(),
