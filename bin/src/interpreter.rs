@@ -1,4 +1,3 @@
-
 use crate::analysis::find_loop;
 use crate::lang::*;
 use std::collections::HashMap;
@@ -6,19 +5,11 @@ use std::collections::HashMap;
 use rustc::hir::def_id::DefId;
 use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::hir::ItemKind;
-use rustc::mir::interpret::ConstValue;
+use rustc::mir::interpret::{ConstValue, InterpError, InterpResult};
 use rustc::mir::*;
 use rustc::ty::layout::Size;
 use rustc::ty::{TyCtxt, TyKind};
-
-pub type EvalResult<T = ()> = Result<T, EvalError>;
-
-#[derive(Debug)]
-pub struct EvalError(String);
-
-macro_rules! eval_err {
-    ($($arg:tt)*) => (EvalError(format!($($arg)*)))
-}
+use rustc::{err_unsup, err_unsup_format};
 
 #[derive(Clone)]
 pub struct Interpreter<'tcx> {
@@ -31,7 +22,7 @@ pub struct Interpreter<'tcx> {
 }
 
 impl<'tcx> Interpreter<'tcx> {
-    pub fn from_tcx(tcx: TyCtxt<'tcx>) -> EvalResult<Self> {
+    pub fn from_tcx(tcx: TyCtxt<'tcx>) -> InterpResult<'tcx, Self> {
         let hir = tcx.hir();
         let mut mirs = HashMap::new();
         let mut funcs = HashMap::new();
@@ -46,7 +37,9 @@ impl<'tcx> Interpreter<'tcx> {
                     let name = tcx.def_path(def_id).to_filename_friendly_no_crate();
                     let mir = tcx.optimized_mir(def_id);
                     if find_loop(mir).is_some() {
-                        return Err(eval_err!("The function {} contains loops", name));
+                        return Err(
+                            err_unsup_format!("The function {} contains loops", name).into()
+                        );
                     }
                     let mut args_ty = Vec::new();
                     for local_decl in mir.local_decls.iter().take(mir.arg_count + 1) {
@@ -70,7 +63,7 @@ impl<'tcx> Interpreter<'tcx> {
         })
     }
 
-    pub fn eval_all(&mut self) -> EvalResult<Vec<FuncDef>> {
+    pub fn eval_all(&mut self) -> InterpResult<'tcx, Vec<FuncDef>> {
         let mut func_defs = Vec::new();
         let def_ids = self.mirs.keys().cloned().collect::<Vec<DefId>>();
         for def_id in def_ids {
@@ -79,24 +72,23 @@ impl<'tcx> Interpreter<'tcx> {
         Ok(func_defs)
     }
 
-    pub fn eval_mir(&mut self, def_id: DefId) -> EvalResult<FuncDef> {
-        let (name, args_ty) = match self
-            .funcs
-            .get(&def_id)
-            .ok_or_else(|| eval_err!("Mir wit DefId {:?} not found", def_id))?
-        {
+    pub fn eval_mir(&mut self, def_id: DefId) -> InterpResult<'tcx, FuncDef> {
+        let (name, args_ty) = match self.funcs.get(&def_id).ok_or_else(|| {
+            InterpError::from(err_unsup_format!("Mir wit DefId {:?} not found", def_id).into())
+        })? {
             Value::Function(name, Ty::Func(args_ty)) => (name.clone(), args_ty.clone()),
             _ => unreachable!(),
         };
 
-        self.memory.insert(Local::from_usize(0).into(), Expr::Uninitialized);
+        self.memory
+            .insert(Local::from_usize(0).into(), Expr::Uninitialized);
 
         for (i, arg_ty) in args_ty.iter().enumerate().skip(1) {
             self.memory.insert(
-            Place {
-                base: PlaceBase::Local(Local::from_usize(i)),
-                projection: None
-            },
+                Place {
+                    base: PlaceBase::Local(Local::from_usize(i)),
+                    projection: None,
+                },
                 Expr::Value(Value::Arg(i, arg_ty.clone())),
             );
         }
@@ -107,7 +99,8 @@ impl<'tcx> Interpreter<'tcx> {
         for i in args_ty.len()..locals_len {
             let local = Local::from_usize(i);
             if !live.contains(&local) {
-                self.memory.insert( Local::from_usize(i).into(), Expr::Uninitialized);
+                self.memory
+                    .insert(Local::from_usize(i).into(), Expr::Uninitialized);
             }
         }
 
@@ -119,11 +112,11 @@ impl<'tcx> Interpreter<'tcx> {
         for i in 1usize..args_ty.len() {
             let place = Place {
                 base: PlaceBase::Local(Local::from_usize(i)),
-                projection: None
+                projection: None,
             };
             self.memory
                 .remove(&place)
-                .ok_or_else(|| eval_err!("Double free error on place {:?}", place))?;
+                .ok_or_else(|| err_unsup_format!("Double free error on place {:?}", place))?;
         }
 
         for i in args_ty.len()..locals_len {
@@ -132,14 +125,14 @@ impl<'tcx> Interpreter<'tcx> {
                 let place: Place = local.into();
                 self.memory
                     .remove(&place)
-                    .ok_or_else(|| eval_err!("Double free error on place {:?}", place))?;
+                    .ok_or_else(|| err_unsup_format!("Double free error on place {:?}", place))?;
             }
         }
 
         let body = self
             .memory
             .remove(&Local::from_usize(0).into())
-            .ok_or_else(|| eval_err!("Double free error on return place"))?;
+            .ok_or_else(|| err_unsup_format!("Double free error on return place"))?;
 
         if self.memory.is_empty() {
             Ok(FuncDef {
@@ -148,23 +141,23 @@ impl<'tcx> Interpreter<'tcx> {
                 ty: Ty::Func(args_ty.clone()),
             })
         } else {
-            Err(eval_err!("Memory is not empty after execution"))
+            Err(err_unsup_format!("Memory is not empty after execution").into())
         }
     }
 
-    fn run(&mut self) -> EvalResult {
+    fn run(&mut self) -> InterpResult<'tcx> {
         while self.step()? {}
         Ok(())
     }
 
-    fn step(&mut self) -> EvalResult<bool> {
+    fn step(&mut self) -> InterpResult<'tcx, bool> {
         let block_data = self
             .mirs
             .get(&self.def_id.expect("Bug: DefId should be some"))
             .expect("Bug: Mir should exist")
             .basic_blocks()
             .get(self.block.expect("Bug: Block should be some"))
-            .ok_or_else(|| eval_err!("Basic block not found"))?;
+            .ok_or_else(|| err_unsup_format!("Basic block not found"))?;
 
         match block_data.statements.get(self.statement) {
             Some(statement) => self.eval_statement(statement),
@@ -172,7 +165,7 @@ impl<'tcx> Interpreter<'tcx> {
         }
     }
 
-    fn eval_statement(&mut self, statement: &Statement<'tcx>) -> EvalResult<bool> {
+    fn eval_statement(&mut self, statement: &Statement<'tcx>) -> InterpResult<'tcx, bool> {
         match statement.kind {
             StatementKind::Assign(ref place, ref rvalue) => {
                 self.eval_rvalue_into_place(rvalue, place)?;
@@ -183,17 +176,17 @@ impl<'tcx> Interpreter<'tcx> {
             StatementKind::StorageDead(local) => {
                 self.memory
                     .remove(&local.into())
-                    .ok_or_else(|| eval_err!("Double free error on local {:?}", local))?;
+                    .ok_or_else(|| err_unsup_format!("Double free error on local {:?}", local))?;
             }
             ref sk => {
-                return Err(eval_err!("StatementKind {:?} is unsupported", sk));
+                return Err(err_unsup_format!("StatementKind {:?} is unsupported", sk).into());
             }
         };
         self.statement += 1;
         Ok(true)
     }
 
-    fn eval_terminator(&mut self, terminator: &Terminator<'tcx>) -> EvalResult<bool> {
+    fn eval_terminator(&mut self, terminator: &Terminator<'tcx>) -> InterpResult<'tcx, bool> {
         match terminator.kind {
             TerminatorKind::Return => {
                 self.block = None;
@@ -210,24 +203,24 @@ impl<'tcx> Interpreter<'tcx> {
                 ref args,
                 ref destination,
                 ..
-            } => match destination {
-                Some((place, block)) => {
-                    let func_expr = self.eval_operand(func)?;
-                    let mut args_expr = Vec::new();
-                    for op in args {
-                        args_expr.push(self.eval_operand(op)?);
+            } => {
+                match destination {
+                    Some((place, block)) => {
+                        let func_expr = self.eval_operand(func)?;
+                        let mut args_expr = Vec::new();
+                        for op in args {
+                            args_expr.push(self.eval_operand(op)?);
+                        }
+                        *self.memory.get_mut(place).ok_or_else(|| {
+                            err_unsup_format!("Place {:?} is not allocated", place)
+                        })? = Expr::Apply(Box::new(func_expr), args_expr);
+                        self.block = Some(*block);
+                        self.statement = 0;
+                        Ok(true)
                     }
-                    *self
-                        .memory
-                        .get_mut(place)
-                        .ok_or_else(|| eval_err!("Place {:?} is not allocated", place))? =
-                        Expr::Apply(Box::new(func_expr), args_expr);
-                    self.block = Some(*block);
-                    self.statement = 0;
-                    Ok(true)
+                    None => Err(err_unsup_format!("Call terminator does not assign").into()),
                 }
-                None => Err(eval_err!("Call terminator does not assign")),
-            },
+            }
             TerminatorKind::SwitchInt {
                 ref discr,
                 ref switch_ty,
@@ -254,7 +247,7 @@ impl<'tcx> Interpreter<'tcx> {
                     let mut target_expr = interpreter
                         .memory
                         .get(&Local::from_usize(0).into())
-                        .ok_or_else(|| eval_err!("Return place is not allocated"))?
+                        .ok_or_else(|| err_unsup_format!("Return place is not allocated"))?
                         .clone();
 
                     target_expr.replace(&discr_expr, &value_expr);
@@ -270,25 +263,29 @@ impl<'tcx> Interpreter<'tcx> {
                 targets_expr.push(
                     self.memory
                         .get(&Local::from_usize(0).into())
-                        .ok_or_else(|| eval_err!("Return place is not allocated"))?
+                        .ok_or_else(|| err_unsup_format!("Return place is not allocated"))?
                         .clone(),
                 );
 
                 *self
                     .memory
                     .get_mut(&Local::from_usize(0).into())
-                    .ok_or_else(|| eval_err!("Return place is not allocated"))? =
+                    .ok_or_else(|| err_unsup_format!("Return place is not allocated"))? =
                     Expr::Switch(Box::new(discr_expr), values_expr, targets_expr);
 
                 self.block = None;
                 self.statement = 0;
                 Ok(false)
             }
-            ref tk => Err(eval_err!("TerminatorKind {:?} is not supported", tk)),
+            ref tk => Err(err_unsup_format!("TerminatorKind {:?} is not supported", tk).into()),
         }
     }
 
-    fn eval_rvalue_into_place(&mut self, rvalue: &Rvalue<'tcx>, place: &Place<'tcx>) -> EvalResult {
+    fn eval_rvalue_into_place(
+        &mut self,
+        rvalue: &Rvalue<'tcx>,
+        place: &Place<'tcx>,
+    ) -> InterpResult<'tcx> {
         let value = match rvalue {
             Rvalue::BinaryOp(bin_op, op1, op2) => Expr::BinaryOp(
                 *bin_op,
@@ -298,26 +295,29 @@ impl<'tcx> Interpreter<'tcx> {
             Rvalue::Ref(_, BorrowKind::Shared, place) => self
                 .memory
                 .get(place)
-                .ok_or_else(|| eval_err!("Place {:?} in reference is not allocated", place))?
+                .ok_or_else(|| {
+                    err_unsup_format!("Place {:?} in reference is not allocated", place)
+                })?
                 .clone(),
             Rvalue::Use(op) => self.eval_operand(op)?,
-            ref rv => return Err(eval_err!("Rvalue {:?} unsupported", rv)),
+            ref rv => return Err(err_unsup_format!("Rvalue {:?} unsupported", rv).into()),
         };
 
-        *self
-            .memory
-            .get_mut(place)
-            .ok_or_else(|| eval_err!("Place {:?} in assignment is not allocated", place))? = value;
+        *self.memory.get_mut(place).ok_or_else(|| {
+            err_unsup_format!("Place {:?} in assignment is not allocated", place)
+        })? = value;
 
         Ok(())
     }
 
-    fn eval_operand(&self, operand: &Operand) -> EvalResult<Expr> {
+    fn eval_operand(&self, operand: &Operand) -> InterpResult<'tcx, Expr> {
         Ok(match operand {
             Operand::Move(place) | Operand::Copy(place) => self
                 .memory
                 .get(place)
-                .ok_or_else(|| eval_err!("Place {:?} in move/copy is not allocated", place))?
+                .ok_or_else(|| {
+                    err_unsup_format!("Place {:?} in move/copy is not allocated", place)
+                })?
                 .clone(),
 
             Operand::Constant(constant) => Expr::Value(
@@ -329,15 +329,20 @@ impl<'tcx> Interpreter<'tcx> {
                                 .unwrap(),
                             ty,
                         )),
-                        _ => Err(eval_err!("Unsupported ConstValue")),
+                        _ => Err(err_unsup_format!("Unsupported ConstValue").into()),
                     })
                     .or_else(|_| match constant.ty.sty {
                         TyKind::FnDef(ref def_id, _) => Ok(self
                             .funcs
                             .get(def_id)
-                            .ok_or_else(|| eval_err!("Function with DefId {:?} not found", def_id))?
+                            .ok_or_else(|| {
+                                err_unsup_format!("Function with DefId {:?} not found", def_id)
+                            })?
                             .clone()),
-                        _ => Err(eval_err!("Unsupported TyKind in constant {:?}", constant)),
+                        _ => Err(err_unsup_format!(
+                            "Unsupported TyKind in constant {:?}",
+                            constant
+                        )),
                     })?,
             ),
         })
@@ -363,11 +368,11 @@ impl<'tcx> Interpreter<'tcx> {
     }
 }
 
-fn transl_tykind(ty_kind: &TyKind) -> EvalResult<Ty> {
+fn transl_tykind<'tcx>(ty_kind: &TyKind) -> InterpResult<'tcx, Ty> {
     match ty_kind {
         TyKind::Bool => Ok(Ty::Bool),
         TyKind::Int(int_ty) => Ok(Ty::Int(int_ty.bit_width().unwrap_or(64))),
         TyKind::Uint(uint_ty) => Ok(Ty::Uint(uint_ty.bit_width().unwrap_or(64))),
-        _ => Err(eval_err!("Unsupported TyKind")),
+        _ => Err(err_unsup_format!("Unsupported TyKind").into()),
     }
 }
