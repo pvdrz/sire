@@ -9,7 +9,8 @@ mod z3;
 pub enum CheckResult {
     Sat,
     Unsat,
-    Unknown,
+    Undecided,
+    Unknown(String),
 }
 
 pub fn check_equality(a: &FuncDef, b: &FuncDef) -> Result<CheckResult, Box<dyn std::error::Error>> {
@@ -29,18 +30,24 @@ pub fn check_equality(a: &FuncDef, b: &FuncDef) -> Result<CheckResult, Box<dyn s
             code += "\n";
             code += &b.to_smtlib();
             code += "\n";
-            code += &format!(
-                "(assert (forall ({}) (= ({} {}) ({} {}))))",
-                args_with_ty,
-                a.def_id.to_smtlib(),
-                args,
-                b.def_id.to_smtlib(),
-                args
-            );
+            if args_with_ty.len() > 0 {
+                code += &format!(
+                    "(assert (forall ({}) (= ({} {}) ({} {}))))",
+                    args_with_ty,
+                    a.def_id.to_smtlib(),
+                    args,
+                    b.def_id.to_smtlib(),
+                    args
+                );
+            } else {
+                code += &format!(
+                    "(assert (= ({}) ({})))",
+                    a.def_id.to_smtlib(),
+                    b.def_id.to_smtlib(),
+                );
+            }
             code += "\n";
             code += "(check-sat)";
-
-            println!("code: {:?}", code);
 
             let result = z3::call(&code)?;
             Ok(if result == "sat\n" {
@@ -48,9 +55,9 @@ pub fn check_equality(a: &FuncDef, b: &FuncDef) -> Result<CheckResult, Box<dyn s
             } else if result == "unsat\n" {
                 CheckResult::Unsat
             } else if result == "unknown\n" {
-                CheckResult::Unknown
+                CheckResult::Undecided
             } else {
-                panic!("Unknown z3 output: {:?}", result)
+                CheckResult::Unknown(result)
             })
         } else {
             Ok(CheckResult::Unsat)
