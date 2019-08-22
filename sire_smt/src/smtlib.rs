@@ -7,21 +7,20 @@ pub trait ToSmtlib {
 impl ToSmtlib for FuncDef {
     fn to_smtlib(&self) -> String {
         let body = self.body.to_smtlib();
-        let mut args_vec = match &self.ty {
-            Ty::Func(vec) => vec.clone(),
+        let args = match &self.ty {
+            Ty::Func(args) => args,
             _ => unreachable!(),
         };
 
-        let ret_ty = args_vec.remove(0).to_smtlib();
+        let ret_ty = args[0].to_smtlib();
 
-        let mut args_with_ty = String::new();
-
-        for (i, ty) in args_vec.iter().enumerate() {
-            let smt_ty = ty.to_smtlib();
-            args_with_ty += &format!("(x{} {}) ", i + 1, smt_ty);
-        }
-
-        args_with_ty.pop();
+        let args_with_ty = args
+            .iter()
+            .enumerate()
+            .skip(1)
+            .map(|(i, ty)| format!("(x{} {})", i, ty.to_smtlib()))
+            .collect::<Vec<String>>()
+            .join(" ");
 
         let def = if self.is_recursive() {
             "define-fun-rec"
