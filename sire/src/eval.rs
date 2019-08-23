@@ -249,7 +249,8 @@ impl<'tcx> Evaluator<'tcx> {
         place: &Place<'tcx>,
     ) -> InterpResult<'tcx> {
         let value = match rvalue {
-            Rvalue::BinaryOp(bin_op, op1, op2) => Expr::BinaryOp(
+            // FIXME: Checked operations need to be handled differently
+            Rvalue::BinaryOp(bin_op, op1, op2) | Rvalue::CheckedBinaryOp(bin_op, op1, op2) => Expr::BinaryOp(
                 *bin_op,
                 Box::new(self.eval_operand(op1)?),
                 Box::new(self.eval_operand(op2)?),
@@ -298,7 +299,7 @@ impl<'tcx> Evaluator<'tcx> {
                                 .unwrap(),
                             ty,
                         ),
-                        _ => return Err(err_unsup_format!("Unsupported ConstValue").into()),
+                        val => return Err(err_unsup_format!("Unsupported ConstValue: {:?}", val).into()),
                     },
                 })
             }
