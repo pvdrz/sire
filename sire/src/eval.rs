@@ -32,8 +32,6 @@ impl<'tcx> Evaluator<'tcx> {
     pub fn eval_mir(&mut self, def_id: DefId) -> InterpResult<'tcx, FuncDef> {
         let mir = self.tcx.optimized_mir(def_id);
 
-        println!("MIR: {:?}", mir);
-
         if find_loop(mir).is_some() {
             return Err(err_unsup_format!("The function {:?} contains loops", def_id).into());
         }
@@ -287,7 +285,11 @@ impl<'tcx> Evaluator<'tcx> {
         Ok(match operand {
             Operand::Move(place) | Operand::Copy(place) => self
                 .memory
-                .get(place)
+                .get(&Place {
+                    // FIXME: handle tuples and projections
+                    base: place.base.clone(),
+                    projection: None,
+                })
                 .ok_or_else(|| {
                     err_unsup_format!("Place {:?} in move/copy is not allocated", place)
                 })?
@@ -362,7 +364,12 @@ impl<'tcx> Evaluator<'tcx> {
                         val: ConstValue::Param(ParamConst{ index, .. })
                     },
                     ..
-                }) => params.push(Param::Const(*index as usize, self.transl_tykind(&ty.sty)?)),
+                }) => {
+                    let param = Param::Const(*index as usize, self.transl_tykind(&ty.sty)?);
+                    if !params.contains(&param) {
+                        params.push(param)
+                    }
+                },
                 _ => (),
             }
         }
