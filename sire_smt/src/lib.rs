@@ -6,8 +6,8 @@ pub mod smtlib;
 mod z3;
 
 pub fn check_equality(a: &FuncDef, b: &FuncDef) -> Result<CheckResult, Box<dyn std::error::Error>> {
-    if let (Ty::Func(a_args_ty), Ty::Func(b_args_ty)) = (&a.ty, &b.ty) {
-        if a_args_ty == b_args_ty {
+    if let (Ty::Func(a_args_ty, a_params), Ty::Func(b_args_ty, b_params)) = (&a.ty, &b.ty) {
+        if a_args_ty == b_args_ty && a_params == b_params {
             let code = vec![
                 a.to_smtlib(),
                 b.to_smtlib(),
@@ -64,7 +64,7 @@ pub fn gen_equality_assertion(a: DefId, b: DefId, args_ty: &[Ty]) -> String {
         )
     } else {
         format!(
-            "(assert (= ({}) ({})))",
+            "(assert (= {} {}))",
             a.to_smtlib(),
             b.to_smtlib(),
         )

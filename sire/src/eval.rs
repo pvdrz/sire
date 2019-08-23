@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use rustc::hir::def_id::DefId;
 use rustc::mir::interpret::{ConstValue, InterpResult};
 use rustc::mir::*;
-use rustc::ty::{layout::Size, TyCtxt, TyKind};
+use rustc::ty::{layout::Size, TyCtxt, TyKind, Const, ParamConst};
 use rustc::{err_unsup, err_unsup_format};
 
 use crate::analysis::find_loop;
@@ -32,6 +32,8 @@ impl<'tcx> Evaluator<'tcx> {
     pub fn eval_mir(&mut self, def_id: DefId) -> InterpResult<'tcx, FuncDef> {
         let mir = self.tcx.optimized_mir(def_id);
 
+        println!("MIR: {:?}", mir);
+
         if find_loop(mir).is_some() {
             return Err(err_unsup_format!("The function {:?} contains loops", def_id).into());
         }
@@ -56,8 +58,10 @@ impl<'tcx> Evaluator<'tcx> {
             );
         }
 
+        let params = self.extract_params(&mir)?;
+
         let locals_len = mir.local_decls.len();
-        let (live, dead) = self.check_storages(&def_id);
+        let (live, dead) = self.check_storages(&mir);
 
         for i in args_ty.len()..locals_len {
             let local = Local::from_usize(i);
@@ -101,7 +105,7 @@ impl<'tcx> Evaluator<'tcx> {
             Ok(FuncDef {
                 body,
                 def_id,
-                ty: Ty::Func(args_ty.clone()),
+                ty: Ty::Func(args_ty.clone(), params),
             })
         } else {
             Err(err_unsup_format!("Memory is not empty after execution").into())
@@ -238,6 +242,12 @@ impl<'tcx> Evaluator<'tcx> {
                 self.block = None;
                 self.statement = 0;
                 Ok(false)
+            },
+            TerminatorKind::Assert { target, .. } => {
+                // FIXME: Don't ignore assertions
+                self.block = Some(target);
+                self.statement = 0;
+                Ok(true)
             }
             ref tk => Err(err_unsup_format!("TerminatorKind {:?} is not supported", tk).into()),
         }
@@ -287,7 +297,7 @@ impl<'tcx> Evaluator<'tcx> {
                 let tykind = &constant.literal.ty.sty;
                 let ty = self.transl_tykind(tykind)?;
                 Expr::Value(match ty {
-                    Ty::Func(_) => match tykind {
+                    Ty::Func(_, _) => match tykind {
                         TyKind::FnDef(def_id, _) => Value::Function(*def_id, ty),
                         _ => unreachable!(),
                     },
@@ -299,6 +309,7 @@ impl<'tcx> Evaluator<'tcx> {
                                 .unwrap(),
                             ty,
                         ),
+                        ConstValue::Param(param) => Value::ConstParam(Param::Const(param.index as usize, ty)),
                         val => return Err(err_unsup_format!("Unsupported ConstValue: {:?}", val).into()),
                     },
                 })
@@ -306,11 +317,9 @@ impl<'tcx> Evaluator<'tcx> {
         })
     }
 
-    fn check_storages(&self, def_id: &DefId) -> (Vec<Local>, Vec<Local>) {
+    fn check_storages(&self, mir: &Body<'tcx>) -> (Vec<Local>, Vec<Local>) {
         let mut live = Vec::new();
         let mut dead = Vec::new();
-
-        let mir = self.tcx.optimized_mir(*def_id);
 
         for block in mir.basic_blocks() {
             for statement in &block.statements {
@@ -325,6 +334,46 @@ impl<'tcx> Evaluator<'tcx> {
         (live, dead)
     }
 
+    fn extract_params(&self, mir: &Body<'tcx>) -> InterpResult<'tcx, Vec<Param>> {
+        let mut ops = Vec::new();
+        let mut params = Vec::new();
+
+        for block in mir.basic_blocks() {
+            for statement in &block.statements {
+                match &statement.kind {
+                    StatementKind::Assign(_, box rvalue) => match rvalue {
+                        Rvalue::Use(op) => ops.push(op.clone()),
+                        Rvalue::BinaryOp(_, op1, op2) | Rvalue::CheckedBinaryOp(_, op1, op2) => {
+                            ops.push(op1.clone());
+                            ops.push(op2.clone());
+                        }
+                        _ => (),
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        for op in ops {
+            match op {
+                Operand::Constant(box Constant {
+                    literal: Const {
+                        ty,
+                        val: ConstValue::Param(ParamConst{ index, .. })
+                    },
+                    ..
+                }) => params.push(Param::Const(*index as usize, self.transl_tykind(&ty.sty)?)),
+                _ => (),
+            }
+        }
+
+        params.sort_by_key(|param| match param {
+            Param::Const(index, _) => *index,
+        });
+
+        Ok(params)
+    }
+
     fn transl_tykind(&self, ty_kind: &TyKind<'tcx>) -> InterpResult<'tcx, Ty> {
         match ty_kind {
             TyKind::Bool => Ok(Ty::Bool),
@@ -337,7 +386,7 @@ impl<'tcx> Evaluator<'tcx> {
                 .iter()
                 .map(|ld| self.transl_tykind(&ld.ty.sty))
                 .collect::<InterpResult<'_, Vec<Ty>>>()
-                .map(|args_ty| Ty::Func(args_ty)),
+                .map(|args_ty| Ty::Func(args_ty, Vec::new())),
             _ => Err(err_unsup_format!("Unsupported TyKind {:?}", ty_kind).into()),
         }
     }

@@ -12,7 +12,23 @@ pub struct FuncDef {
 
 impl fmt::Display for FuncDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(defun {:?} {} {})", self.def_id, self.ty, self.body)
+        let params = match &self.ty {
+            Ty::Func(_, params) => params
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<String>>()
+                .join(" "),
+            _ => unreachable!(),
+        };
+
+        write!(
+            f,
+            "(defun {:?}<{}> {} {})",
+            self.def_id,
+            params,
+            self.ty,
+            self.body
+        )
     }
 }
 
@@ -28,7 +44,7 @@ pub enum Ty {
     Int(usize),
     Uint(usize),
     Bool,
-    Func(Vec<Ty>),
+    Func(Vec<Ty>, Vec<Param>),
 }
 
 impl Ty {
@@ -36,7 +52,7 @@ impl Ty {
         match self {
             Ty::Int(n) | Ty::Uint(n) => Some(*n),
             Ty::Bool => Some(8),
-            Ty::Func(_) => None,
+            Ty::Func(_, _) => None,
         }
     }
 }
@@ -47,14 +63,36 @@ impl fmt::Display for Ty {
             Ty::Int(n) => write!(f, "(int {})", n),
             Ty::Uint(n) => write!(f, "(uint {})", n),
             Ty::Bool => write!(f, "bool"),
-            Ty::Func(tys) => write!(
+            Ty::Func(args_ty, _) => write!(
                 f,
                 "{}",
-                tys.iter()
+                args_ty.iter()
                     .map(|x| x.to_string())
                     .collect::<Vec<_>>()
-                    .join(" ")
+                    .join(" "),
             ),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Param {
+    Const(usize, Ty),
+}
+
+impl Param {
+    pub fn ty(&self) -> Ty {
+        match self {
+            Param::Const(_, ty) => ty,
+        }
+        .clone()
+    }
+}
+
+impl fmt::Display for Param {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Param::Const(index, ty) => write!(f, "(p{} {})", index, ty),
         }
     }
 }
@@ -116,7 +154,7 @@ impl Expr {
         match self {
             Expr::Value(value) => value.ty(),
             Expr::Apply(e1, _) => match e1.ty() {
-                Ty::Func(tys) => tys.first().unwrap().clone(),
+                Ty::Func(args_ty, _) => args_ty.first().unwrap().clone(),
                 _ => unreachable!(),
             },
             Expr::BinaryOp(op, e1, _) => match op {
@@ -181,16 +219,17 @@ pub enum Value {
     Arg(usize, Ty),
     Const(u128, Ty),
     Function(DefId, Ty),
+    ConstParam(Param),
 }
 
 impl Value {
     pub fn ty(&self) -> Ty {
         match self {
-            Value::Arg(_, ty) => ty,
-            Value::Const(_, ty) => ty,
-            Value::Function(_, ty) => ty,
+            Value::Arg(_, ty) => ty.clone(),
+            Value::Const(_, ty) => ty.clone(),
+            Value::Function(_, ty) => ty.clone(),
+            Value::ConstParam(param) => param.ty(),
         }
-        .clone()
     }
 }
 
@@ -200,6 +239,9 @@ impl fmt::Display for Value {
             Value::Arg(n, _) => write!(f, "_{}", n),
             Value::Const(value, ty) => write!(f, "(const {} {})", ty, value),
             Value::Function(def_id, _) => write!(f, "{:?}", def_id),
+            Value::ConstParam(param) => match param {
+                Param::Const(index, _) => write!(f, "p{}", index),
+            },
         }
     }
 }

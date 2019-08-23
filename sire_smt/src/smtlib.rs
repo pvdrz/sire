@@ -7,8 +7,8 @@ pub trait ToSmtlib {
 impl ToSmtlib for FuncDef {
     fn to_smtlib(&self) -> String {
         let body = self.body.to_smtlib();
-        let args = match &self.ty {
-            Ty::Func(args) => args,
+        let (args, params) = match &self.ty {
+            Ty::Func(args, params) => (args, params),
             _ => unreachable!(),
         };
 
@@ -19,6 +19,11 @@ impl ToSmtlib for FuncDef {
             .enumerate()
             .skip(1)
             .map(|(i, ty)| format!("(x{} {})", i, ty.to_smtlib()))
+            .chain(params.iter().map(|param| {
+                match param {
+                    Param::Const(index, ty) => format!("(p{} {})", index, ty.to_smtlib()),
+                }
+            }))
             .collect::<Vec<String>>()
             .join(" ");
 
@@ -35,6 +40,14 @@ impl ToSmtlib for FuncDef {
             args_with_ty = args_with_ty,
             body = body
         )
+    }
+}
+
+impl ToSmtlib for Param {
+    fn to_smtlib(&self) -> String {
+        match *self {
+            Param::Const(index, _) => format!("p{}", index),
+        }
     }
 }
 
@@ -62,6 +75,7 @@ impl ToSmtlib for Value {
                 ty => format!("(_ bv{} {})", b, ty.size().unwrap()),
             },
             Value::Function(d, _) => d.to_smtlib(),
+            Value::ConstParam(p) => p.to_smtlib(),
         }
     }
 }
