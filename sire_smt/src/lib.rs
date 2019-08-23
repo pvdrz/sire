@@ -11,7 +11,7 @@ pub fn check_equality(a: &FuncDef, b: &FuncDef) -> Result<CheckResult, Box<dyn s
             let code = vec![
                 a.to_smtlib(),
                 b.to_smtlib(),
-                gen_equality_assertion(a.def_id, b.def_id, a_args_ty),
+                gen_equality_assertion(a.def_id, b.def_id, a_args_ty, a_params),
                 "(check-sat)".to_owned(),
             ].join("\n");
             return z3::call(&code).map(CheckResult::from_string);
@@ -42,13 +42,18 @@ impl CheckResult {
     }
 }
 
-pub fn gen_equality_assertion(a: DefId, b: DefId, args_ty: &[Ty]) -> String {
-    if args_ty.len() > 1 {
+pub fn gen_equality_assertion(a: DefId, b: DefId, args_ty: &[Ty], params: &[Param]) -> String {
+    if args_ty.len() + params.len() > 1 {
         let (args_with_ty, args) = args_ty
             .iter()
             .enumerate()
             .skip(1)
             .map(|(i, ty)| (format!("(x{} {})", i, ty.to_smtlib()), format!("x{}", i)))
+            .chain(params.iter().map(|param| {
+                match param {
+                    Param::Const(index, ty) => (format!("(p{} {})", index, ty.to_smtlib()), format!("p{}", index)),
+                }
+            }))
             .unzip::<String, String, Vec<String>, Vec<String>>();
 
         let args_with_ty = args_with_ty.join(" ");
