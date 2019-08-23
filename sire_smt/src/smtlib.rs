@@ -132,7 +132,7 @@ impl ToSmtlib for Expr {
                     .join(" ")
             ),
             Expr::Switch(val, cs, bs) => {
-                if val.ty() == Ty::Bool {
+                if let Ty::Bool = val.ty() {
                     format!(
                         "(ite {} {} {})",
                         val.to_smtlib(),
