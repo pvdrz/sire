@@ -34,6 +34,8 @@ pub enum Expr {
     Apply(Box<Expr>, Vec<Expr>),
     BinaryOp(BinOp, Box<Expr>, Box<Expr>),
     Switch(Box<Expr>, Vec<Expr>, Vec<Expr>),
+    Tuple(Vec<Expr>),
+    Projection(Box<Expr>, usize),
     Uninitialized,
 }
 
@@ -48,6 +50,7 @@ impl Expr {
                         || e3.iter().any(|e| e.contains(target))
                 }
                 Expr::BinaryOp(_, e1, e2) => e1.contains(target) || e2.contains(target),
+                Expr::Tuple(e1) => e1.iter().any(|e| e.contains(target)),
                 _ => false,
             }
     }
@@ -75,6 +78,11 @@ impl Expr {
                 Expr::BinaryOp(_, e1, e2) => {
                     e1.replace(target, substitution);
                     e2.replace(target, substitution);
+                }
+                Expr::Tuple(e1) => {
+                    for e in e1 {
+                        e.replace(target, substitution);
+                    }
                 }
                 _ => (),
             }

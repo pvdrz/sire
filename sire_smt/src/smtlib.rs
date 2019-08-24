@@ -55,7 +55,19 @@ impl ToSmtlib for Ty {
     fn to_smtlib(&self) -> String {
         match self {
             Ty::Bool => "Bool".to_owned(),
-            _ => format!("(_ BitVec {})", self.size().unwrap()),
+            Ty::Tuple(fields) => {
+                let mut fields = fields.iter().rev();
+                if let Some(first) = fields.next() {
+                    let mut buffer = first.to_smtlib();
+                    for field in fields {
+                        buffer = format!("(Tuple {} {})", field, buffer);
+                    }
+                    buffer
+                } else {
+                    "Unit".to_owned()
+                }
+            }
+            _ => format!("(_ BitVec {})", self.bits().unwrap()),
         }
     }
 }
@@ -72,7 +84,7 @@ impl ToSmtlib for Value {
             Value::Arg(n, _) => format!("x{}", n),
             Value::Const(b, ty) => match ty {
                 Ty::Bool => format!("{}", *b != 0),
-                ty => format!("(_ bv{} {})", b, ty.size().unwrap()),
+                ty => format!("(_ bv{} {})", b, ty.bits().unwrap()),
             },
             Value::Function(d, _) => d.to_smtlib(),
             Value::ConstParam(p) => p.to_smtlib(),
@@ -151,6 +163,30 @@ impl ToSmtlib for Expr {
                         );
                     }
                     cond
+                }
+            },
+            Expr::Tuple(fields) => {
+                let mut fields = fields.iter().rev();
+                if let Some(first) = fields.next() {
+                    let mut buffer = first.to_smtlib();
+                    for field in fields {
+                        buffer = format!("(tuple {} {})", field.to_smtlib(), buffer);
+                    }
+                    buffer
+                } else {
+                    "unit".to_owned()
+                }
+            },
+            Expr::Projection(box tuple, mut index) => {
+                let mut buffer = tuple.to_smtlib();
+                loop {
+                    if index == 0 {
+                        buffer = format!("(first {})", buffer);
+                        return buffer;
+                    } else {
+                        buffer = format!("(second {})", buffer);
+                        index -= 1;
+                    }
                 }
             }
             _ => unimplemented!(),

@@ -13,7 +13,7 @@ impl fmt::Display for FuncDef {
 
         write!(
             f,
-            "(defun {:?}<{}> {} {})",
+            "(defun {:?}[{}] {} {})",
             self.def_id,
             params,
             self.ty,
@@ -35,6 +35,14 @@ impl fmt::Display for Ty {
                     .map(|x| x.to_string())
                     .collect::<Vec<_>>()
                     .join(" "),
+            ),
+            Ty::Tuple(fields_ty) => write!(
+                f,
+                "({})",
+                fields_ty.iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
             ),
         }
     }
@@ -89,6 +97,21 @@ impl fmt::Display for Expr {
                     .collect::<Vec<_>>()
                     .join(" "),
                 targets.last().unwrap()
+            ),
+            Expr::Tuple(fields) => write!(
+                f,
+                "(tuple {})",
+                fields
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+            Expr::Projection(e1, i) => write!(
+                f,
+                "(proj {} {})",
+                e1,
+                i
             ),
             Expr::Uninitialized => write!(f, "uninitialized"),
         }

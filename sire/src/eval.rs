@@ -257,12 +257,20 @@ impl<'tcx> Evaluator<'tcx> {
         place: &Place<'tcx>,
     ) -> InterpResult<'tcx> {
         let value = match rvalue {
-            // FIXME: Checked operations need to be handled differently
-            Rvalue::BinaryOp(bin_op, op1, op2) | Rvalue::CheckedBinaryOp(bin_op, op1, op2) => Expr::BinaryOp(
+            Rvalue::BinaryOp(bin_op, op1, op2) => Expr::BinaryOp(
                 *bin_op,
                 Box::new(self.eval_operand(op1)?),
                 Box::new(self.eval_operand(op2)?),
             ),
+            Rvalue::CheckedBinaryOp(bin_op, op1, op2) => Expr::Tuple(vec![
+                Expr::BinaryOp(
+                    *bin_op,
+                    Box::new(self.eval_operand(op1)?),
+                    Box::new(self.eval_operand(op2)?),
+                ),
+                // FIXME: Check the operation
+                Expr::Value(Value::Const(0, Ty::Bool)),
+            ]),
             Rvalue::Ref(_, BorrowKind::Shared, place) => self
                 .memory
                 .get(place)
@@ -283,17 +291,23 @@ impl<'tcx> Evaluator<'tcx> {
 
     fn eval_operand(&self, operand: &Operand<'tcx>) -> InterpResult<'tcx, Expr> {
         Ok(match operand {
-            Operand::Move(place) | Operand::Copy(place) => self
-                .memory
-                .get(&Place {
-                    // FIXME: handle tuples and projections
-                    base: place.base.clone(),
-                    projection: None,
-                })
-                .ok_or_else(|| {
-                    err_unsup_format!("Place {:?} in move/copy is not allocated", place)
-                })?
-                .clone(),
+            Operand::Move(Place{base, projection}) | Operand::Copy(Place{base, projection}) => {
+                let expr = self
+                    .memory
+                    .get(&Place {
+                        base: base.clone(),
+                        projection: None,
+                    })
+                    .ok_or_else(|| {
+                        err_unsup_format!("Place in {:?} operand is not allocated", operand)
+                    })?
+                    .clone();
+                if let Some(box Projection { elem: ProjectionElem::Field(field, _), ..}) = projection {
+                    Expr::Projection(Box::new(expr), field.index())
+                } else {
+                    expr
+                }
+            },
 
             Operand::Constant(constant) => {
                 let tykind = &constant.literal.ty.sty;
@@ -306,9 +320,7 @@ impl<'tcx> Evaluator<'tcx> {
 
                     _ => match constant.literal.val {
                         ConstValue::Scalar(scalar) => Value::Const(
-                            scalar
-                                .to_bits(Size::from_bits(ty.size().unwrap() as u64))
-                                .unwrap(),
+                            scalar.to_bits(Size::from_bits(ty.bits().unwrap() as u64))?,
                             ty,
                         ),
                         ConstValue::Param(param) => Value::ConstParam(Param::Const(param.index as usize, ty)),
@@ -384,8 +396,8 @@ impl<'tcx> Evaluator<'tcx> {
     fn transl_tykind(&self, ty_kind: &TyKind<'tcx>) -> InterpResult<'tcx, Ty> {
         match ty_kind {
             TyKind::Bool => Ok(Ty::Bool),
-            TyKind::Int(int_ty) => Ok(Ty::Int(int_ty.bit_width().unwrap_or(64))),
-            TyKind::Uint(uint_ty) => Ok(Ty::Uint(uint_ty.bit_width().unwrap_or(64))),
+            TyKind::Int(int_ty) => Ok(Ty::Int(int_ty.bit_width().unwrap_or(8 * std::mem::size_of::<isize>()))),
+            TyKind::Uint(uint_ty) => Ok(Ty::Uint(uint_ty.bit_width().unwrap_or(8 * std::mem::size_of::<usize>()))),
             TyKind::FnDef(def_id, _) => self
                 .tcx
                 .optimized_mir(*def_id)
