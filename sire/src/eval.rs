@@ -3,11 +3,15 @@ use std::collections::HashMap;
 use rustc::hir::def_id::DefId;
 use rustc::mir::interpret::{ConstValue, InterpResult};
 use rustc::mir::*;
-use rustc::ty::{layout::Size, TyCtxt, TyKind, Const, ParamConst};
+use rustc::ty::{layout::Size, TyCtxt, TyKind};
 use rustc::{err_unsup, err_unsup_format};
 
 use crate::analysis::find_loop;
 use crate::sir::*;
+
+use self::visitor::*;
+
+mod visitor;
 
 #[derive(Clone)]
 pub struct Evaluator<'tcx> {
@@ -20,13 +24,7 @@ pub struct Evaluator<'tcx> {
 
 impl<'tcx> Evaluator<'tcx> {
     pub fn from_tcx(tcx: TyCtxt<'tcx>) -> Self {
-        Evaluator {
-            block: None,
-            statement: 0,
-            memory: HashMap::new(),
-            def_id: None,
-            tcx,
-        }
+        Evaluator { block: None, statement: 0, memory: HashMap::new(), def_id: None, tcx }
     }
 
     pub fn eval_mir(&mut self, def_id: DefId) -> InterpResult<'tcx, FuncDef> {
@@ -43,29 +41,24 @@ impl<'tcx> Evaluator<'tcx> {
             .map(|ld| self.transl_tykind(&ld.ty.sty))
             .collect::<InterpResult<'_, Vec<Ty>>>()?;
 
-        self.memory
-            .insert(Local::from_usize(0).into(), Expr::Uninitialized);
+        self.memory.insert(Local::from_usize(0).into(), Expr::Uninitialized);
 
         for (i, arg_ty) in args_ty.iter().enumerate().skip(1) {
             self.memory.insert(
-                Place {
-                    base: PlaceBase::Local(Local::from_usize(i)),
-                    projection: None,
-                },
+                Place { base: PlaceBase::Local(Local::from_usize(i)), projection: None },
                 Expr::Value(Value::Arg(i, arg_ty.clone())),
             );
         }
 
-        let params = self.extract_params(&mir)?;
+        let params = ExtractParams::run(self, &mir);
 
         let locals_len = mir.local_decls.len();
-        let (live, dead) = self.check_storages(&mir);
+        let (live, dead) = CheckStorage::run(&mir);
 
         for i in args_ty.len()..locals_len {
             let local = Local::from_usize(i);
             if !live.contains(&local) {
-                self.memory
-                    .insert(Local::from_usize(i).into(), Expr::Uninitialized);
+                self.memory.insert(Local::from_usize(i).into(), Expr::Uninitialized);
             }
         }
 
@@ -75,10 +68,7 @@ impl<'tcx> Evaluator<'tcx> {
         self.run()?;
 
         for i in 1usize..args_ty.len() {
-            let place = Place {
-                base: PlaceBase::Local(Local::from_usize(i)),
-                projection: None,
-            };
+            let place = Place { base: PlaceBase::Local(Local::from_usize(i)), projection: None };
             self.memory.remove(&place).ok_or_else(|| {
                 err_unsup_format!("Double free error on place {:?} argument", place)
             })?;
@@ -100,11 +90,7 @@ impl<'tcx> Evaluator<'tcx> {
             .ok_or_else(|| err_unsup_format!("Double free error on return place"))?;
 
         if self.memory.is_empty() {
-            Ok(FuncDef {
-                body,
-                def_id,
-                ty: Ty::Func(args_ty.clone(), params),
-            })
+            Ok(FuncDef { body, def_id, ty: Ty::Func(args_ty.clone(), params) })
         } else {
             Err(err_unsup_format!("Memory is not empty after execution").into())
         }
@@ -162,12 +148,7 @@ impl<'tcx> Evaluator<'tcx> {
                 self.statement = 0;
                 Ok(true)
             }
-            TerminatorKind::Call {
-                ref func,
-                ref args,
-                ref destination,
-                ..
-            } => {
+            TerminatorKind::Call { ref func, ref args, ref destination, .. } => {
                 match destination {
                     Some((place, block)) => {
                         let func_expr = self.eval_operand(func)?;
@@ -186,11 +167,7 @@ impl<'tcx> Evaluator<'tcx> {
                 }
             }
             TerminatorKind::SwitchInt {
-                ref discr,
-                ref switch_ty,
-                ref values,
-                ref targets,
-                ..
+                ref discr, ref switch_ty, ref values, ref targets, ..
             } => {
                 let discr_expr = self.eval_operand(&discr)?;
                 let mut values_expr = Vec::new();
@@ -240,7 +217,7 @@ impl<'tcx> Evaluator<'tcx> {
                 self.block = None;
                 self.statement = 0;
                 Ok(false)
-            },
+            }
             TerminatorKind::Assert { target, .. } => {
                 // FIXME: Don't ignore assertions
                 self.block = Some(target);
@@ -291,23 +268,23 @@ impl<'tcx> Evaluator<'tcx> {
 
     fn eval_operand(&self, operand: &Operand<'tcx>) -> InterpResult<'tcx, Expr> {
         Ok(match operand {
-            Operand::Move(Place{base, projection}) | Operand::Copy(Place{base, projection}) => {
+            Operand::Move(Place { base, projection })
+            | Operand::Copy(Place { base, projection }) => {
                 let expr = self
                     .memory
-                    .get(&Place {
-                        base: base.clone(),
-                        projection: None,
-                    })
+                    .get(&Place { base: base.clone(), projection: None })
                     .ok_or_else(|| {
                         err_unsup_format!("Place in {:?} operand is not allocated", operand)
                     })?
                     .clone();
-                if let Some(box Projection { elem: ProjectionElem::Field(field, _), ..}) = projection {
+                if let Some(box Projection { elem: ProjectionElem::Field(field, _), .. }) =
+                    projection
+                {
                     Expr::Projection(Box::new(expr), field.index())
                 } else {
                     expr
                 }
-            },
+            }
 
             Operand::Constant(constant) => {
                 let tykind = &constant.literal.ty.sty;
@@ -323,81 +300,29 @@ impl<'tcx> Evaluator<'tcx> {
                             scalar.to_bits(Size::from_bits(ty.bits().unwrap() as u64))?,
                             ty,
                         ),
-                        ConstValue::Param(param) => Value::ConstParam(Param::Const(param.index as usize, ty)),
-                        val => return Err(err_unsup_format!("Unsupported ConstValue: {:?}", val).into()),
+                        ConstValue::Param(param) => {
+                            Value::ConstParam(Param(param.index as usize, ty))
+                        }
+                        val => {
+                            return Err(
+                                err_unsup_format!("Unsupported ConstValue: {:?}", val).into()
+                            );
+                        }
                     },
                 })
             }
         })
     }
 
-    fn check_storages(&self, mir: &Body<'tcx>) -> (Vec<Local>, Vec<Local>) {
-        let mut live = Vec::new();
-        let mut dead = Vec::new();
-
-        for block in mir.basic_blocks() {
-            for statement in &block.statements {
-                match statement.kind {
-                    StatementKind::StorageLive(local) => live.push(local),
-                    StatementKind::StorageDead(local) => dead.push(local),
-                    _ => (),
-                }
-            }
-        }
-
-        (live, dead)
-    }
-
-    fn extract_params(&self, mir: &Body<'tcx>) -> InterpResult<'tcx, Vec<Param>> {
-        let mut ops = Vec::new();
-        let mut params = Vec::new();
-
-        for block in mir.basic_blocks() {
-            for statement in &block.statements {
-                match &statement.kind {
-                    StatementKind::Assign(_, box rvalue) => match rvalue {
-                        Rvalue::Use(op) => ops.push(op.clone()),
-                        Rvalue::BinaryOp(_, op1, op2) | Rvalue::CheckedBinaryOp(_, op1, op2) => {
-                            ops.push(op1.clone());
-                            ops.push(op2.clone());
-                        }
-                        _ => (),
-                    }
-                    _ => (),
-                }
-            }
-        }
-
-        for op in ops {
-            match op {
-                Operand::Constant(box Constant {
-                    literal: Const {
-                        ty,
-                        val: ConstValue::Param(ParamConst{ index, .. })
-                    },
-                    ..
-                }) => {
-                    let param = Param::Const(*index as usize, self.transl_tykind(&ty.sty)?);
-                    if !params.contains(&param) {
-                        params.push(param)
-                    }
-                },
-                _ => (),
-            }
-        }
-
-        params.sort_by_key(|param| match param {
-            Param::Const(index, _) => *index,
-        });
-
-        Ok(params)
-    }
-
     fn transl_tykind(&self, ty_kind: &TyKind<'tcx>) -> InterpResult<'tcx, Ty> {
         match ty_kind {
             TyKind::Bool => Ok(Ty::Bool),
-            TyKind::Int(int_ty) => Ok(Ty::Int(int_ty.bit_width().unwrap_or(8 * std::mem::size_of::<isize>()))),
-            TyKind::Uint(uint_ty) => Ok(Ty::Uint(uint_ty.bit_width().unwrap_or(8 * std::mem::size_of::<usize>()))),
+            TyKind::Int(int_ty) => {
+                Ok(Ty::Int(int_ty.bit_width().unwrap_or(8 * std::mem::size_of::<isize>())))
+            }
+            TyKind::Uint(uint_ty) => {
+                Ok(Ty::Uint(uint_ty.bit_width().unwrap_or(8 * std::mem::size_of::<usize>())))
+            }
             TyKind::FnDef(def_id, _) => self
                 .tcx
                 .optimized_mir(*def_id)

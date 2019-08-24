@@ -19,19 +19,11 @@ impl ToSmtlib for FuncDef {
             .enumerate()
             .skip(1)
             .map(|(i, ty)| format!("(x{} {})", i, ty.to_smtlib()))
-            .chain(params.iter().map(|param| {
-                match param {
-                    Param::Const(index, ty) => format!("(p{} {})", index, ty.to_smtlib()),
-                }
-            }))
+            .chain(params.iter().map(|Param(index, ty)| format!("(p{} {})", index, ty.to_smtlib())))
             .collect::<Vec<String>>()
             .join(" ");
 
-        let def = if self.is_recursive() {
-            "define-fun-rec"
-        } else {
-            "define-fun"
-        };
+        let def = if self.is_recursive() { "define-fun-rec" } else { "define-fun" };
         format!(
             "({def} {name} ({args_with_ty}) {ret_ty} {body})",
             def = def,
@@ -45,9 +37,8 @@ impl ToSmtlib for FuncDef {
 
 impl ToSmtlib for Param {
     fn to_smtlib(&self) -> String {
-        match *self {
-            Param::Const(index, _) => format!("p{}", index),
-        }
+        let Param(index, _) = self;
+        format!("p{}", index)
     }
 }
 
@@ -138,19 +129,11 @@ impl ToSmtlib for Expr {
             Expr::Apply(f, es) => format!(
                 "({} {})",
                 f.to_smtlib(),
-                es.iter()
-                    .map(ToSmtlib::to_smtlib)
-                    .collect::<Vec<_>>()
-                    .join(" ")
+                es.iter().map(ToSmtlib::to_smtlib).collect::<Vec<_>>().join(" ")
             ),
             Expr::Switch(val, cs, bs) => {
                 if let Ty::Bool = val.ty() {
-                    format!(
-                        "(ite {} {} {})",
-                        val.to_smtlib(),
-                        bs[1].to_smtlib(),
-                        bs[0].to_smtlib()
-                    )
+                    format!("(ite {} {} {})", val.to_smtlib(), bs[1].to_smtlib(), bs[0].to_smtlib())
                 } else {
                     let mut cond = bs.last().unwrap().to_smtlib();
                     for i in (0..cs.len()).rev() {
@@ -164,7 +147,7 @@ impl ToSmtlib for Expr {
                     }
                     cond
                 }
-            },
+            }
             Expr::Tuple(fields) => {
                 let mut fields = fields.iter().rev();
                 if let Some(first) = fields.next() {
@@ -176,7 +159,7 @@ impl ToSmtlib for Expr {
                 } else {
                     "unit".to_owned()
                 }
-            },
+            }
             Expr::Projection(box tuple, mut index) => {
                 let mut buffer = tuple.to_smtlib();
                 loop {

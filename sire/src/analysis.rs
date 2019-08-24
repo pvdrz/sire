@@ -26,7 +26,9 @@ fn get_loop_start<'tcx>(
                     }
                     result
                 }
-                TerminatorKind::Call { destination: Some((_, target)), .. } => get_loop_start(mir, target, visited),
+                TerminatorKind::Call { destination: Some((_, target)), .. } => {
+                    get_loop_start(mir, target, visited)
+                }
                 _ => None,
             }
         }

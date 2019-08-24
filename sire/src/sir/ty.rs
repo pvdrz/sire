@@ -36,9 +36,8 @@ pub trait Typed {
 
 impl Typed for Param {
     fn ty(&self) -> Ty {
-        match self {
-            Param::Const(_, ty) => ty.clone(),
-        }
+        let Param(_, ty) = self;
+        ty.clone()
     }
 }
 
@@ -59,7 +58,7 @@ impl Typed for Expr {
             Expr::Projection(e1, i) => match **e1 {
                 Expr::Tuple(ref fields) => fields.get(*i).unwrap().ty(),
                 _ => unreachable!(),
-            }
+            },
             Expr::Uninitialized => unreachable!(),
         }
     }

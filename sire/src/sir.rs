@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt;
 
 pub use rustc::hir::def_id::DefId;
@@ -18,14 +19,25 @@ pub struct FuncDef {
 
 impl FuncDef {
     pub fn is_recursive(&self) -> bool {
-        self.body
-            .contains(&Expr::Value(Value::Function(self.def_id, self.ty.clone())))
+        self.body.contains(&Expr::Value(Value::Function(self.def_id, self.ty.clone())))
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Param {
-    Const(usize, Ty),
+pub struct Param(pub usize, pub Ty);
+
+impl Ord for Param {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let Param(a, _) = self;
+        let Param(b, _) = other;
+        a.cmp(b)
+    }
+}
+
+impl PartialOrd for Param {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,4 +109,3 @@ pub enum Value {
     Function(DefId, Ty),
     ConstParam(Param),
 }
-

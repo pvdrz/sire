@@ -3,22 +3,13 @@ use super::*;
 impl fmt::Display for FuncDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let params = match &self.ty {
-            Ty::Func(_, params) => params
-                .iter()
-                .map(|p| p.to_string())
-                .collect::<Vec<String>>()
-                .join(" "),
+            Ty::Func(_, params) => {
+                params.iter().map(|p| p.to_string()).collect::<Vec<String>>().join(" ")
+            }
             _ => unreachable!(),
         };
 
-        write!(
-            f,
-            "(defun {:?}[{}] {} {})",
-            self.def_id,
-            params,
-            self.ty,
-            self.body
-        )
+        write!(f, "(defun {:?}[{}] {} {})", self.def_id, params, self.ty, self.body)
     }
 }
 
@@ -28,21 +19,13 @@ impl fmt::Display for Ty {
             Ty::Int(n) => write!(f, "(int {})", n),
             Ty::Uint(n) => write!(f, "(uint {})", n),
             Ty::Bool => write!(f, "bool"),
-            Ty::Func(args_ty, _) => write!(
-                f,
-                "{}",
-                args_ty.iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            ),
+            Ty::Func(args_ty, _) => {
+                write!(f, "{}", args_ty.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "),)
+            }
             Ty::Tuple(fields_ty) => write!(
                 f,
                 "({})",
-                fields_ty.iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                fields_ty.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", "),
             ),
         }
     }
@@ -50,9 +33,8 @@ impl fmt::Display for Ty {
 
 impl fmt::Display for Param {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Param::Const(index, ty) => write!(f, "(p{} {})", index, ty),
-        }
+        let Param(index, ty) = self;
+        write!(f, "(p{} {})", index, ty)
     }
 }
 
@@ -64,10 +46,7 @@ impl fmt::Display for Expr {
                 f,
                 "({} {})",
                 func,
-                args.iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ")
+                args.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ")
             ),
             Expr::BinaryOp(op, e1, e2) => {
                 let op_string = match op {
@@ -101,18 +80,9 @@ impl fmt::Display for Expr {
             Expr::Tuple(fields) => write!(
                 f,
                 "(tuple {})",
-                fields
-                    .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" "),
+                fields.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "),
             ),
-            Expr::Projection(e1, i) => write!(
-                f,
-                "(proj {} {})",
-                e1,
-                i
-            ),
+            Expr::Projection(e1, i) => write!(f, "(proj {} {})", e1, i),
             Expr::Uninitialized => write!(f, "uninitialized"),
         }
     }
@@ -124,9 +94,7 @@ impl fmt::Display for Value {
             Value::Arg(n, _) => write!(f, "_{}", n),
             Value::Const(value, ty) => write!(f, "(const {} {})", ty, value),
             Value::Function(def_id, _) => write!(f, "{:?}", def_id),
-            Value::ConstParam(param) => match param {
-                Param::Const(index, _) => write!(f, "p{}", index),
-            },
+            Value::ConstParam(Param(index, _)) => write!(f, "p{}", index),
         }
     }
 }
