@@ -58,6 +58,7 @@ impl ToSmtlib for Ty {
                     "Unit".to_owned()
                 }
             }
+            Ty::Maybe(ty) => format!("(Maybe {})", ty.to_smtlib()),
             _ => format!("(_ BitVec {})", self.bits().unwrap()),
         }
     }
@@ -160,18 +161,18 @@ impl ToSmtlib for Expr {
                     "unit".to_owned()
                 }
             }
-            Expr::Projection(box tuple, mut index) => {
+            Expr::Projection(box tuple, index) => {
                 let mut buffer = tuple.to_smtlib();
-                loop {
-                    if index == 0 {
-                        buffer = format!("(first {})", buffer);
-                        return buffer;
-                    } else {
-                        buffer = format!("(second {})", buffer);
-                        index -= 1;
-                    }
+                match index {
+                    0 => buffer = format!("(first {})", buffer),
+                    1 => buffer = format!("(second {})", buffer),
+                    // FIXME: Support larger tuples
+                    _ => unimplemented!(),
                 }
+                buffer
             }
+            Expr::Just(e1) => format!("(just {})", e1.to_smtlib()),
+            Expr::Nothing(_) => "nothing".to_owned(),
             _ => unimplemented!(),
         }
     }

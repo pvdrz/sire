@@ -48,6 +48,8 @@ pub enum Expr {
     Switch(Box<Expr>, Vec<Expr>, Vec<Expr>),
     Tuple(Vec<Expr>),
     Projection(Box<Expr>, usize),
+    Just(Box<Expr>),
+    Nothing(Ty),
     Uninitialized,
 }
 

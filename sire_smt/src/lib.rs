@@ -12,9 +12,11 @@ pub fn check_equality(a: &FuncDef, b: &FuncDef) -> Result<CheckResult, Box<dyn s
         if a_args_ty == b_args_ty && a_params == b_params {
             let code = vec![
                 "(declare-datatypes (T1 T2) ((Tuple (tuple (first T1) (second T2)))))".to_owned(),
+                "(declare-datatypes (T1) ((Maybe nothing (just (from-maybe T1)))))".to_owned(),
+                "(declare-datatypes () ((Unit (unit))))".to_owned(),
                 // FIXME: Lookup instances of each datatype
                 "(declare-const _ (Tuple (_ BitVec 64) Bool))".to_owned(),
-                "(declare-datatypes () ((Unit (unit))))".to_owned(),
+                "(declare-const _ (Maybe (_ BitVec 64)))".to_owned(),
                 a.to_smtlib(),
                 b.to_smtlib(),
                 gen_equality_assertion(a.def_id, b.def_id, a_args_ty, a_params),

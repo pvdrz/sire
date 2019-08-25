@@ -34,7 +34,7 @@ impl<'tcx> Evaluator<'tcx> {
             return Err(err_unsup_format!("The function {:?} contains loops", def_id).into());
         }
 
-        let args_ty = mir
+        let mut args_ty = mir
             .local_decls
             .iter()
             .take(mir.arg_count + 1)
@@ -54,6 +54,11 @@ impl<'tcx> Evaluator<'tcx> {
 
         let locals_len = mir.local_decls.len();
         let (live, dead) = CheckStorage::run(&mir);
+
+        if CheckPanic::run(&mir) {
+            let return_ty = args_ty[0].clone();
+            args_ty[0] = Ty::Maybe(Box::new(return_ty));
+        }
 
         for i in args_ty.len()..locals_len {
             let local = Local::from_usize(i);
@@ -218,11 +223,46 @@ impl<'tcx> Evaluator<'tcx> {
                 self.statement = 0;
                 Ok(false)
             }
-            TerminatorKind::Assert { target, .. } => {
-                // FIXME: Don't ignore assertions
-                self.block = Some(target);
+            TerminatorKind::Assert { ref cond, ref expected, ref target, .. } => {
+                let cond_expr = self.eval_operand(cond)?;
+
+                let mut interpreter = self.clone();
+                interpreter.block = Some(*target);
+                interpreter.statement = 0;
+                interpreter.run()?;
+
+                let mut just_expr = interpreter
+                    .memory
+                    .get(&Local::from_usize(0).into())
+                    .ok_or_else(|| err_unsup_format!("Return place is not allocated"))?
+                    .clone();
+
+                let mut target_ty = just_expr.ty();
+
+                match target_ty {
+                    Ty::Maybe(_) => (),
+                    _ => {
+                        target_ty = Ty::Maybe(Box::new(target_ty));
+                        just_expr = Expr::Just(Box::new(just_expr));
+                    }
+                };
+
+                let maybe_ty = Ty::Maybe(Box::new(target_ty));
+                let nothing_expr = Expr::Nothing(maybe_ty);
+                let values_expr = vec![Expr::Value(Value::Const(0, Ty::Bool))];
+                let targets_expr = if *expected {
+                    vec![nothing_expr, just_expr]
+                } else {
+                    vec![just_expr, nothing_expr]
+                };
+                *self
+                    .memory
+                    .get_mut(&Local::from_usize(0).into())
+                    .ok_or_else(|| err_unsup_format!("Return place is not allocated"))? =
+                    Expr::Switch(Box::new(cond_expr), values_expr, targets_expr);
+                self.block = None;
                 self.statement = 0;
-                Ok(true)
+                Ok(false)
             }
             ref tk => Err(err_unsup_format!("TerminatorKind {:?} is not supported", tk).into()),
         }
