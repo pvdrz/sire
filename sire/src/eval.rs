@@ -15,8 +15,7 @@ mod util;
 
 #[derive(Clone)]
 pub struct Evaluator<'tcx> {
-    block: Option<BasicBlock>,
-    statement: usize,
+    location: Location,
     memory: Memory<'tcx>,
     def_id: Option<DefId>,
     tcx: TyCtxt<'tcx>,
@@ -24,7 +23,7 @@ pub struct Evaluator<'tcx> {
 
 impl<'tcx> Evaluator<'tcx> {
     pub fn from_tcx(tcx: TyCtxt<'tcx>) -> Self {
-        Evaluator { block: None, statement: 0, memory: Default::default(), def_id: None, tcx }
+        Evaluator { location: Location::START, memory: Default::default(), def_id: None, tcx }
     }
 
     pub fn eval_mir(&mut self, def_id: DefId) -> InterpResult<'tcx, FuncDef> {
@@ -65,7 +64,6 @@ impl<'tcx> Evaluator<'tcx> {
         }
 
         self.def_id = Some(def_id);
-        self.block = Some(BasicBlock::from_u32(0));
 
         self.run()?;
 
@@ -101,10 +99,10 @@ impl<'tcx> Evaluator<'tcx> {
             .tcx
             .optimized_mir(self.def_id.expect("Bug: DefId should be some"))
             .basic_blocks()
-            .get(self.block.expect("Bug: Block should be some"))
+            .get(self.location.block)
             .ok_or_else(|| err_unsup_format!("Basic block not found"))?;
 
-        match block_data.statements.get(self.statement) {
+        match block_data.statements.get(self.location.statement_index) {
             Some(statement) => self.eval_statement(statement),
             None => self.eval_terminator(block_data.terminator()),
         }
@@ -125,20 +123,18 @@ impl<'tcx> Evaluator<'tcx> {
                 return Err(err_unsup_format!("StatementKind {:?} is unsupported", sk).into());
             }
         };
-        self.statement += 1;
+        self.location = self.location.successor_within_block();
         Ok(true)
     }
 
     fn eval_terminator(&mut self, terminator: &Terminator<'tcx>) -> InterpResult<'tcx, bool> {
         match terminator.kind {
             TerminatorKind::Return => {
-                self.block = None;
-                self.statement = 0;
+                self.location = Location::START;
                 Ok(false)
             }
             TerminatorKind::Goto { target } => {
-                self.block = Some(target);
-                self.statement = 0;
+                self.location = target.start_location();
                 Ok(true)
             }
             TerminatorKind::Call { ref func, ref args, ref destination, .. } => match destination {
@@ -149,8 +145,7 @@ impl<'tcx> Evaluator<'tcx> {
                         args_expr.push(self.eval_operand(op)?);
                     }
                     *self.memory.get_mut(place)? = Expr::Apply(Box::new(func_expr), args_expr);
-                    self.block = Some(*block);
-                    self.statement = 0;
+                    self.location = block.start_location();
                     Ok(true)
                 }
                 None => Err(err_unsup_format!("Call terminator does not assign").into()),
@@ -174,8 +169,7 @@ impl<'tcx> Evaluator<'tcx> {
                     targets_expr.push(target_expr);
                 }
 
-                self.block = Some(*targets.last().unwrap());
-                self.statement = 0;
+                self.location = targets.last().unwrap().start_location();
                 self.run()?;
 
                 targets_expr.push(self.memory.get(&Place::RETURN_PLACE)?.clone());
@@ -183,8 +177,7 @@ impl<'tcx> Evaluator<'tcx> {
                 *self.memory.get_mut(&Place::RETURN_PLACE)? =
                     Expr::Switch(Box::new(discr_expr), values_expr, targets_expr);
 
-                self.block = None;
-                self.statement = 0;
+                self.location = Location::START;
                 Ok(false)
             }
             TerminatorKind::Assert { ref cond, ref expected, ref target, .. } => {
@@ -210,8 +203,7 @@ impl<'tcx> Evaluator<'tcx> {
                 };
                 *self.memory.get_mut(&Place::RETURN_PLACE)? =
                     Expr::Switch(Box::new(cond_expr), values_expr, targets_expr);
-                self.block = None;
-                self.statement = 0;
+                self.location = Location::START;
                 Ok(false)
             }
             ref tk => Err(err_unsup_format!("TerminatorKind {:?} is not supported", tk).into()),
@@ -315,8 +307,7 @@ impl<'tcx> Evaluator<'tcx> {
     fn fork_eval(&self, block: BasicBlock) -> InterpResult<'tcx, Expr> {
         let mut fork = Evaluator {
             memory: self.memory.clone(),
-            block: Some(block),
-            statement: 0,
+            location: block.start_location(),
             def_id: self.def_id,
             tcx: self.tcx,
         };
