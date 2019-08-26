@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use rustc::hir::def_id::DefId;
 use rustc::mir::interpret::{ConstValue, InterpResult};
 use rustc::mir::*;
@@ -9,22 +7,24 @@ use rustc::{err_unsup, err_unsup_format};
 use crate::analysis::find_loop;
 use crate::sir::*;
 
-use self::visitor::*;
+use self::memory::*;
+use self::util::*;
 
-mod visitor;
+mod memory;
+mod util;
 
 #[derive(Clone)]
 pub struct Evaluator<'tcx> {
     block: Option<BasicBlock>,
     statement: usize,
-    memory: HashMap<Place<'tcx>, Expr>,
+    memory: Memory<'tcx>,
     def_id: Option<DefId>,
     tcx: TyCtxt<'tcx>,
 }
 
 impl<'tcx> Evaluator<'tcx> {
     pub fn from_tcx(tcx: TyCtxt<'tcx>) -> Self {
-        Evaluator { block: None, statement: 0, memory: HashMap::new(), def_id: None, tcx }
+        Evaluator { block: None, statement: 0, memory: Default::default(), def_id: None, tcx }
     }
 
     pub fn eval_mir(&mut self, def_id: DefId) -> InterpResult<'tcx, FuncDef> {
@@ -41,13 +41,10 @@ impl<'tcx> Evaluator<'tcx> {
             .map(|ld| self.transl_tykind(&ld.ty.sty))
             .collect::<InterpResult<'_, Vec<Ty>>>()?;
 
-        self.memory.insert(Local::from_usize(0).into(), Expr::Uninitialized);
+        self.memory.insert_from_int(0, Expr::Uninitialized);
 
         for (i, arg_ty) in args_ty.iter().enumerate().skip(1) {
-            self.memory.insert(
-                Place { base: PlaceBase::Local(Local::from_usize(i)), projection: None },
-                Expr::Value(Value::Arg(i, arg_ty.clone())),
-            );
+            self.memory.insert_from_int(i, Expr::Value(Value::Arg(i, arg_ty.clone())));
         }
 
         let params = ExtractParams::run(self, &mir);
@@ -63,7 +60,7 @@ impl<'tcx> Evaluator<'tcx> {
         for i in args_ty.len()..locals_len {
             let local = Local::from_usize(i);
             if !live.contains(&local) {
-                self.memory.insert(Local::from_usize(i).into(), Expr::Uninitialized);
+                self.memory.insert_from_int(i, Expr::Uninitialized);
             }
         }
 
@@ -73,26 +70,17 @@ impl<'tcx> Evaluator<'tcx> {
         self.run()?;
 
         for i in 1usize..args_ty.len() {
-            let place = Place { base: PlaceBase::Local(Local::from_usize(i)), projection: None };
-            self.memory.remove(&place).ok_or_else(|| {
-                err_unsup_format!("Double free error on place {:?} argument", place)
-            })?;
+            self.memory.remove_from_int(i)?;
         }
 
         for i in args_ty.len()..locals_len {
             let local = Local::from_usize(i);
             if !dead.contains(&local) {
-                let place: Place<'_> = local.into();
-                self.memory.remove(&place).ok_or_else(|| {
-                    err_unsup_format!("Double free error on place {:?} local", place)
-                })?;
+                self.memory.remove(&local.into())?;
             }
         }
 
-        let mut body = self
-            .memory
-            .remove(&Local::from_usize(0).into())
-            .ok_or_else(|| err_unsup_format!("Double free error on return place"))?;
+        let mut body = self.memory.remove(&Place::RETURN_PLACE)?;
 
         body.optimize();
 
@@ -131,9 +119,7 @@ impl<'tcx> Evaluator<'tcx> {
                 self.memory.insert(local.into(), Expr::Uninitialized);
             }
             StatementKind::StorageDead(local) => {
-                self.memory
-                    .remove(&local.into())
-                    .ok_or_else(|| err_unsup_format!("Double free error on local {:?}", local))?;
+                self.memory.remove(&local.into())?;
             }
             ref sk => {
                 return Err(err_unsup_format!("StatementKind {:?} is unsupported", sk).into());
@@ -155,24 +141,20 @@ impl<'tcx> Evaluator<'tcx> {
                 self.statement = 0;
                 Ok(true)
             }
-            TerminatorKind::Call { ref func, ref args, ref destination, .. } => {
-                match destination {
-                    Some((place, block)) => {
-                        let func_expr = self.eval_operand(func)?;
-                        let mut args_expr = Vec::new();
-                        for op in args {
-                            args_expr.push(self.eval_operand(op)?);
-                        }
-                        *self.memory.get_mut(place).ok_or_else(|| {
-                            err_unsup_format!("Place {:?} is not allocated", place)
-                        })? = Expr::Apply(Box::new(func_expr), args_expr);
-                        self.block = Some(*block);
-                        self.statement = 0;
-                        Ok(true)
+            TerminatorKind::Call { ref func, ref args, ref destination, .. } => match destination {
+                Some((place, block)) => {
+                    let func_expr = self.eval_operand(func)?;
+                    let mut args_expr = Vec::new();
+                    for op in args {
+                        args_expr.push(self.eval_operand(op)?);
                     }
-                    None => Err(err_unsup_format!("Call terminator does not assign").into()),
+                    *self.memory.get_mut(place)? = Expr::Apply(Box::new(func_expr), args_expr);
+                    self.block = Some(*block);
+                    self.statement = 0;
+                    Ok(true)
                 }
-            }
+                None => Err(err_unsup_format!("Call terminator does not assign").into()),
+            },
             TerminatorKind::SwitchInt {
                 ref discr, ref switch_ty, ref values, ref targets, ..
             } => {
@@ -192,11 +174,7 @@ impl<'tcx> Evaluator<'tcx> {
                     let value_expr =
                         Expr::Value(Value::Const(bytes, self.transl_tykind(&switch_ty.sty)?));
 
-                    let mut target_expr = interpreter
-                        .memory
-                        .get(&Local::from_usize(0).into())
-                        .ok_or_else(|| err_unsup_format!("Return place is not allocated"))?
-                        .clone();
+                    let mut target_expr = interpreter.memory.get(&Place::RETURN_PLACE)?.clone();
 
                     target_expr.replace(&discr_expr, &value_expr);
 
@@ -208,17 +186,9 @@ impl<'tcx> Evaluator<'tcx> {
                 self.statement = 0;
                 self.run()?;
 
-                targets_expr.push(
-                    self.memory
-                        .get(&Local::from_usize(0).into())
-                        .ok_or_else(|| err_unsup_format!("Return place is not allocated"))?
-                        .clone(),
-                );
+                targets_expr.push(self.memory.get(&Place::RETURN_PLACE)?.clone());
 
-                *self
-                    .memory
-                    .get_mut(&Local::from_usize(0).into())
-                    .ok_or_else(|| err_unsup_format!("Return place is not allocated"))? =
+                *self.memory.get_mut(&Place::RETURN_PLACE)? =
                     Expr::Switch(Box::new(discr_expr), values_expr, targets_expr);
 
                 self.block = None;
@@ -233,11 +203,7 @@ impl<'tcx> Evaluator<'tcx> {
                 interpreter.statement = 0;
                 interpreter.run()?;
 
-                let mut just_expr = interpreter
-                    .memory
-                    .get(&Local::from_usize(0).into())
-                    .ok_or_else(|| err_unsup_format!("Return place is not allocated"))?
-                    .clone();
+                let mut just_expr = interpreter.memory.get(&Place::RETURN_PLACE)?.clone();
 
                 let mut target_ty = just_expr.ty();
 
@@ -257,10 +223,7 @@ impl<'tcx> Evaluator<'tcx> {
                 } else {
                     vec![just_expr, nothing_expr]
                 };
-                *self
-                    .memory
-                    .get_mut(&Local::from_usize(0).into())
-                    .ok_or_else(|| err_unsup_format!("Return place is not allocated"))? =
+                *self.memory.get_mut(&Place::RETURN_PLACE)? =
                     Expr::Switch(Box::new(cond_expr), values_expr, targets_expr);
                 self.block = None;
                 self.statement = 0;
@@ -290,20 +253,12 @@ impl<'tcx> Evaluator<'tcx> {
                 // FIXME: Check the operation
                 Expr::Value(Value::Const(0, Ty::Bool)),
             ]),
-            Rvalue::Ref(_, BorrowKind::Shared, place) => self
-                .memory
-                .get(place)
-                .ok_or_else(|| {
-                    err_unsup_format!("Place {:?} in reference is not allocated", place)
-                })?
-                .clone(),
+            Rvalue::Ref(_, BorrowKind::Shared, place) => self.memory.get(place)?.clone(),
             Rvalue::Use(op) => self.eval_operand(op)?,
             ref rv => return Err(err_unsup_format!("Rvalue {:?} unsupported", rv).into()),
         };
 
-        *self.memory.get_mut(place).ok_or_else(|| {
-            err_unsup_format!("Place {:?} in assignment is not allocated", place)
-        })? = value;
+        *self.memory.get_mut(place)? = value;
 
         Ok(())
     }
@@ -312,13 +267,8 @@ impl<'tcx> Evaluator<'tcx> {
         Ok(match operand {
             Operand::Move(Place { base, projection })
             | Operand::Copy(Place { base, projection }) => {
-                let expr = self
-                    .memory
-                    .get(&Place { base: base.clone(), projection: None })
-                    .ok_or_else(|| {
-                        err_unsup_format!("Place in {:?} operand is not allocated", operand)
-                    })?
-                    .clone();
+                let expr =
+                    self.memory.get(&Place { base: base.clone(), projection: None })?.clone();
                 if let Some(box Projection { elem: ProjectionElem::Field(field, _), .. }) =
                     projection
                 {
