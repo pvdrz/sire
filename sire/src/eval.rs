@@ -41,7 +41,7 @@ impl<'tcx> Evaluator<'tcx> {
             .map(|ld| self.transl_tykind(&ld.ty.sty))
             .collect::<InterpResult<'_, Vec<Ty>>>()?;
 
-        self.memory.insert_from_int(0, Expr::Uninitialized);
+        self.memory.insert(Place::RETURN_PLACE, Expr::Uninitialized);
 
         for (i, arg_ty) in args_ty.iter().enumerate().skip(1) {
             self.memory.insert_from_int(i, Expr::Value(Value::Arg(i, arg_ty.clone())));
@@ -162,19 +162,11 @@ impl<'tcx> Evaluator<'tcx> {
                 let mut values_expr = Vec::new();
                 let mut targets_expr = Vec::new();
 
-                for i in 0..values.len() {
-                    let bytes = values[i];
-                    let block = targets[i];
-
-                    let mut interpreter = self.clone();
-                    interpreter.block = Some(block);
-                    interpreter.statement = 0;
-                    interpreter.run()?;
+                for (&bytes, &block) in values.iter().zip(targets) {
+                    let mut target_expr = self.fork_eval(block)?;
 
                     let value_expr =
                         Expr::Value(Value::Const(bytes, self.transl_tykind(&switch_ty.sty)?));
-
-                    let mut target_expr = interpreter.memory.get(&Place::RETURN_PLACE)?.clone();
 
                     target_expr.replace(&discr_expr, &value_expr);
 
@@ -197,14 +189,7 @@ impl<'tcx> Evaluator<'tcx> {
             }
             TerminatorKind::Assert { ref cond, ref expected, ref target, .. } => {
                 let cond_expr = self.eval_operand(cond)?;
-
-                let mut interpreter = self.clone();
-                interpreter.block = Some(*target);
-                interpreter.statement = 0;
-                interpreter.run()?;
-
-                let mut just_expr = interpreter.memory.get(&Place::RETURN_PLACE)?.clone();
-
+                let mut just_expr = self.fork_eval(*target)?;
                 let mut target_ty = just_expr.ty();
 
                 match target_ty {
@@ -325,5 +310,19 @@ impl<'tcx> Evaluator<'tcx> {
                 .map(|args_ty| Ty::Func(args_ty, Vec::new())),
             _ => Err(err_unsup_format!("Unsupported TyKind {:?}", ty_kind).into()),
         }
+    }
+
+    fn fork_eval(&self, block: BasicBlock) -> InterpResult<'tcx, Expr> {
+        let mut fork = Evaluator {
+            memory: self.memory.clone(),
+            block: Some(block),
+            statement: 0,
+            def_id: self.def_id,
+            tcx: self.tcx,
+        };
+
+        fork.run()?;
+
+        fork.memory.get(&Place::RETURN_PLACE).map(|e| e.clone())
     }
 }
