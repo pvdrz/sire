@@ -89,10 +89,12 @@ impl<'tcx> Evaluator<'tcx> {
             }
         }
 
-        let body = self
+        let mut body = self
             .memory
             .remove(&Local::from_usize(0).into())
             .ok_or_else(|| err_unsup_format!("Double free error on return place"))?;
+
+        body.optimize();
 
         if self.memory.is_empty() {
             Ok(FuncDef { body, def_id, ty: Ty::Func(args_ty.clone(), params) })

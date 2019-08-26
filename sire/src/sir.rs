@@ -8,6 +8,7 @@ pub use self::display::*;
 pub use self::ty::*;
 
 mod display;
+mod optimize;
 mod ty;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
