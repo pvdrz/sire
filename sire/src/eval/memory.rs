@@ -1,3 +1,4 @@
+#![allow(rustc::default_hash_types)]
 use std::collections::HashMap;
 
 use rustc::mir::interpret::InterpResult;
