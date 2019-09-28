@@ -10,6 +10,7 @@ pub use self::ty::*;
 mod display;
 mod optimize;
 mod ty;
+mod visitor;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FuncDef {
