@@ -53,7 +53,7 @@ impl<'tcx, 'eval> Visitor<'tcx> for ExtractParams<'tcx, 'eval> {
                 ..
             }) => {
                 // FIXME: not all rust types are supported
-                let param = Param(*index as usize, self.evaluator.transl_tykind(&ty.sty).unwrap());
+                let param = Param(*index as usize, self.evaluator.transl_ty(ty).unwrap());
                 self.params.insert(param);
             }
             _ => (),

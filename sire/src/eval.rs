@@ -1,7 +1,7 @@
 use rustc::hir::def_id::DefId;
 use rustc::mir::interpret::{ConstValue, InterpResult};
 use rustc::mir::*;
-use rustc::ty::{layout::Size, TyCtxt, TyKind};
+use rustc::ty::{self, layout::Size, TyCtxt};
 use rustc::{err_unsup, err_unsup_format};
 
 use crate::analysis::find_loop;
@@ -37,10 +37,10 @@ impl<'tcx> Evaluator<'tcx> {
             .local_decls
             .iter()
             .take(mir.arg_count + 1)
-            .map(|ld| self.transl_tykind(&ld.ty.sty))
+            .map(|ld| self.transl_ty(&ld.ty))
             .collect::<InterpResult<'_, Vec<Ty>>>()?;
 
-        self.memory.insert(Place::RETURN_PLACE, Expr::Uninitialized);
+        self.memory.insert(Place::return_place(), Expr::Uninitialized);
 
         for (i, arg_ty) in args_ty.iter().enumerate().skip(1) {
             self.memory.insert_from_int(i, Expr::Value(Value::Arg(i, arg_ty.clone())));
@@ -78,7 +78,7 @@ impl<'tcx> Evaluator<'tcx> {
             }
         }
 
-        let mut body = self.memory.remove(&Place::RETURN_PLACE)?;
+        let mut body = self.memory.remove(&Place::return_place())?;
 
         body.optimize();
 
@@ -110,7 +110,7 @@ impl<'tcx> Evaluator<'tcx> {
 
     fn eval_statement(&mut self, statement: &Statement<'tcx>) -> InterpResult<'tcx, bool> {
         match statement.kind {
-            StatementKind::Assign(ref place, ref rvalue) => {
+            StatementKind::Assign(box (ref place, ref rvalue)) => {
                 self.eval_rvalue_into_place(rvalue, place)?;
             }
             StatementKind::StorageLive(local) => {
@@ -161,7 +161,7 @@ impl<'tcx> Evaluator<'tcx> {
                     let mut target_expr = self.fork_eval(block)?;
 
                     let value_expr =
-                        Expr::Value(Value::Const(bytes, self.transl_tykind(&switch_ty.sty)?));
+                        Expr::Value(Value::Const(bytes, self.transl_ty(switch_ty)?));
 
                     target_expr.replace(&discr_expr, &value_expr);
 
@@ -172,9 +172,9 @@ impl<'tcx> Evaluator<'tcx> {
                 self.location = targets.last().unwrap().start_location();
                 self.run()?;
 
-                targets_expr.push(self.memory.get(&Place::RETURN_PLACE)?.clone());
+                targets_expr.push(self.memory.get(&Place::return_place())?.clone());
 
-                *self.memory.get_mut(&Place::RETURN_PLACE)? =
+                *self.memory.get_mut(&Place::return_place())? =
                     Expr::Switch(Box::new(discr_expr), values_expr, targets_expr);
 
                 self.location = Location::START;
@@ -201,7 +201,7 @@ impl<'tcx> Evaluator<'tcx> {
                 } else {
                     vec![just_expr, nothing_expr]
                 };
-                *self.memory.get_mut(&Place::RETURN_PLACE)? =
+                *self.memory.get_mut(&Place::return_place())? =
                     Expr::Switch(Box::new(cond_expr), values_expr, targets_expr);
                 self.location = Location::START;
                 Ok(false)
@@ -245,10 +245,8 @@ impl<'tcx> Evaluator<'tcx> {
             Operand::Move(Place { base, projection })
             | Operand::Copy(Place { base, projection }) => {
                 let expr =
-                    self.memory.get(&Place { base: base.clone(), projection: None })?.clone();
-                if let Some(box Projection { elem: ProjectionElem::Field(field, _), .. }) =
-                    projection
-                {
+                    self.memory.get(&Place { base: base.clone(), projection: box [] })?.clone();
+                if let box [.., ProjectionElem::Field(field, _)] = projection {
                     Expr::Projection(Box::new(expr), field.index())
                 } else {
                     expr
@@ -256,11 +254,11 @@ impl<'tcx> Evaluator<'tcx> {
             }
 
             Operand::Constant(constant) => {
-                let tykind = &constant.literal.ty.sty;
-                let ty = self.transl_tykind(tykind)?;
+                let const_ty = &constant.literal.ty;
+                let ty = self.transl_ty(const_ty)?;
                 Expr::Value(match ty {
-                    Ty::Func(_, _) => match tykind {
-                        TyKind::FnDef(def_id, _) => Value::Function(*def_id, ty),
+                    Ty::Func(_, _) => match const_ty.kind {
+                        ty::FnDef(def_id, _) => Value::Function(def_id, ty),
                         _ => unreachable!(),
                     },
 
@@ -282,25 +280,25 @@ impl<'tcx> Evaluator<'tcx> {
             }
         })
     }
-
-    fn transl_tykind(&self, ty_kind: &TyKind<'tcx>) -> InterpResult<'tcx, Ty> {
-        match ty_kind {
-            TyKind::Bool => Ok(Ty::Bool),
-            TyKind::Int(int_ty) => {
+    #[allow(rustc::usage_of_qualified_ty)]
+    fn transl_ty(&self, ty: ty::Ty<'tcx>) -> InterpResult<'tcx, Ty> {
+        match ty.kind {
+            ty::Bool => Ok(Ty::Bool),
+            ty::Int(int_ty) => {
                 Ok(Ty::Int(int_ty.bit_width().unwrap_or(8 * std::mem::size_of::<isize>())))
             }
-            TyKind::Uint(uint_ty) => {
+            ty::Uint(uint_ty) => {
                 Ok(Ty::Uint(uint_ty.bit_width().unwrap_or(8 * std::mem::size_of::<usize>())))
             }
-            TyKind::FnDef(def_id, _) => self
+            ty::FnDef(def_id, _) => self
                 .tcx
-                .optimized_mir(*def_id)
+                .optimized_mir(def_id)
                 .local_decls
                 .iter()
-                .map(|ld| self.transl_tykind(&ld.ty.sty))
+                .map(|ld| self.transl_ty(&ld.ty))
                 .collect::<InterpResult<'_, Vec<Ty>>>()
                 .map(|args_ty| Ty::Func(args_ty, Vec::new())),
-            _ => Err(err_unsup_format!("Unsupported TyKind {:?}", ty_kind).into()),
+            _ => Err(err_unsup_format!("Unsupported ty {:?}", ty).into()),
         }
     }
 
@@ -314,6 +312,6 @@ impl<'tcx> Evaluator<'tcx> {
 
         fork.run()?;
 
-        fork.memory.get(&Place::RETURN_PLACE).map(|e| e.clone())
+        fork.memory.get(&Place::return_place()).map(|e| e.clone())
     }
 }
