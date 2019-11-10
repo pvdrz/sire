@@ -160,8 +160,7 @@ impl<'tcx> Evaluator<'tcx> {
                 for (&bytes, &block) in values.iter().zip(targets) {
                     let mut target_expr = self.fork_eval(block)?;
 
-                    let value_expr =
-                        Expr::Value(Value::Const(bytes, self.transl_ty(switch_ty)?));
+                    let value_expr = Expr::Value(Value::Const(bytes, self.transl_ty(switch_ty)?));
 
                     target_expr.replace(&discr_expr, &value_expr);
 
@@ -182,18 +181,9 @@ impl<'tcx> Evaluator<'tcx> {
             }
             TerminatorKind::Assert { ref cond, ref expected, ref target, .. } => {
                 let cond_expr = self.eval_operand(cond)?;
-                let mut just_expr = self.fork_eval(*target)?;
-                let mut target_ty = just_expr.ty();
+                let just_expr = Expr::Just(Box::new(self.fork_eval(*target)?));
+                let maybe_ty = just_expr.ty();
 
-                match target_ty {
-                    Ty::Maybe(_) => (),
-                    _ => {
-                        target_ty = Ty::Maybe(Box::new(target_ty));
-                        just_expr = Expr::Just(Box::new(just_expr));
-                    }
-                };
-
-                let maybe_ty = Ty::Maybe(Box::new(target_ty));
                 let nothing_expr = Expr::Nothing(maybe_ty);
                 let values_expr = vec![Expr::Value(Value::Const(0, Ty::Bool))];
                 let targets_expr = if *expected {

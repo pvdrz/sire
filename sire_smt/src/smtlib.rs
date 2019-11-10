@@ -172,7 +172,7 @@ impl ToSmtlib for Expr {
                 buffer
             }
             Expr::Just(e1) => format!("(just {})", e1.to_smtlib()),
-            Expr::Nothing(_) => "nothing".to_owned(),
+            Expr::Nothing(ty) => format!("(as nothing {})", ty.to_smtlib()),
             _ => unimplemented!(),
         }
     }

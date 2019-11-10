@@ -1,5 +1,7 @@
 use rustc::mir::*;
 
+use crate::sir::*;
+
 pub fn find_loop<'tcx>(mir: &'tcx Body<'tcx>) -> Option<Vec<BasicBlock>> {
     get_loop_start(mir, BasicBlock::from_u32(0), Vec::new())
 }
@@ -31,6 +33,41 @@ fn get_loop_start<'tcx>(
                 }
                 _ => None,
             }
+        }
+    }
+}
+
+impl Expr {
+    pub fn find_datatype_instances(&mut self) -> Vec<Ty> {
+        Instanced::find_types(self)
+    }
+}
+
+#[derive(Default)]
+struct Instanced {
+    inner: Vec<Ty>,
+}
+
+impl Instanced {
+    fn find_types(expr: &mut Expr) -> Vec<Ty> {
+        let mut this = Self::default();
+        this.visit_expr(expr);
+        this.inner
+    }
+}
+
+impl Visitor for Instanced {
+    fn visit_expr(&mut self, expr: &mut Expr) {
+        self.super_expr(expr);
+        let ty = expr.ty();
+
+        match ty {
+            Ty::Tuple(_) | Ty::Maybe(_) => {
+                if !self.inner.contains(&ty) {
+                    self.inner.push(ty);
+                }
+            }
+            _ => (),
         }
     }
 }

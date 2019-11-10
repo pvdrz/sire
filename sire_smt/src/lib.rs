@@ -10,19 +10,33 @@ mod z3;
 pub fn check_equality(a: &FuncDef, b: &FuncDef) -> Result<CheckResult, Box<dyn std::error::Error>> {
     if let (Ty::Func(a_args_ty, a_params), Ty::Func(b_args_ty, b_params)) = (&a.ty, &b.ty) {
         if a_args_ty == b_args_ty && a_params == b_params {
-            let code = vec![
+            let mut instances = a.body.clone().find_datatype_instances();
+            for instance in b.body.clone().find_datatype_instances() {
+                if !instances.contains(&instance) {
+                    instances.push(instance);
+                }
+            }
+            // Datatype declaration
+            let mut code = vec![
                 "(declare-datatypes (T1 T2) ((Tuple (tuple (first T1) (second T2)))))".to_owned(),
                 "(declare-datatypes (T1) ((Maybe nothing (just (from-maybe T1)))))".to_owned(),
                 "(declare-datatypes () ((Unit (unit))))".to_owned(),
-                // FIXME: Lookup instances of each datatype
-                "(declare-const _ (Tuple (_ BitVec 64) Bool))".to_owned(),
-                "(declare-const _ (Maybe (_ BitVec 64)))".to_owned(),
+            ];
+            // Instances of datatypes
+            code.extend_from_slice(
+                &instances
+                    .iter()
+                    .map(|ty| format!("(declare-const _ {})", ty.to_smtlib()))
+                    .collect::<Vec<_>>(),
+            );
+            // Function declarations and equality assertin
+            code.extend_from_slice(&[
                 a.to_smtlib(),
                 b.to_smtlib(),
                 gen_equality_assertion(a.def_id, b.def_id, a_args_ty, a_params),
                 "(check-sat)".to_owned(),
-            ]
-            .join("\n");
+            ]);
+            let code = code.join("\n");
             return z3::call(&code).map(CheckResult::from_string);
         }
     }

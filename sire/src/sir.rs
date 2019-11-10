@@ -6,6 +6,7 @@ pub use rustc::mir::BinOp;
 
 pub use self::display::*;
 pub use self::ty::*;
+pub use self::visitor::*;
 
 mod display;
 mod optimize;
