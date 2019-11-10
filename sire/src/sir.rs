@@ -7,11 +7,13 @@ pub use rustc::mir::BinOp;
 pub use self::display::*;
 pub use self::ty::*;
 pub use self::visitor::*;
+pub use self::visitor_mut::*;
 
 mod display;
 mod optimize;
 mod ty;
 mod visitor;
+mod visitor_mut;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FuncDef {

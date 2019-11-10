@@ -1,5 +1,4 @@
 use super::*;
-use visitor::Visitor;
 
 impl Expr {
     pub fn optimize(&mut self) {
@@ -14,21 +13,21 @@ struct Optimizer {
 
 impl Optimizer {
     fn optimize(expr: &mut Expr) {
-        Self::default().visit_expr(expr);
+        Self::default().visit_mut_expr(expr);
     }
 }
 
-impl Visitor for Optimizer {
-    fn visit_expr(&mut self, expr: &mut Expr) {
-        self.super_expr(expr);
+impl VisitorMut for Optimizer {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        self.super_mut_expr(expr);
 
         if let Some(new_expr) = self.expr.take() {
             *expr = new_expr;
         }
     }
 
-    fn visit_projection(&mut self, tuple: &mut Expr, index: usize) {
-        self.visit_expr(tuple);
+    fn visit_mut_projection(&mut self, tuple: &mut Expr, index: usize) {
+        self.visit_mut_expr(tuple);
 
         if let Expr::Tuple(fields) = tuple {
             if let Some(field) = fields.get(index) {

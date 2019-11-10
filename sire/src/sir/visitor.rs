@@ -1,39 +1,39 @@
 use super::*;
 
 pub trait Visitor {
-    fn visit_expr(&mut self, expr: &mut Expr) {
+    fn visit_expr(&mut self, expr: &Expr) {
         self.super_expr(expr)
     }
 
-    fn visit_value(&mut self, value: &mut Value) {
+    fn visit_value(&mut self, value: &Value) {
         self.super_value(value)
     }
 
-    fn visit_apply(&mut self, func: &mut Expr, args: &mut [Expr]) {
+    fn visit_apply(&mut self, func: &Expr, args: &[Expr]) {
         self.super_apply(func, args)
     }
 
-    fn visit_binary_op(&mut self, bin_op: &mut BinOp, e1: &mut Expr, e2: &mut Expr) {
+    fn visit_binary_op(&mut self, bin_op: &BinOp, e1: &Expr, e2: &Expr) {
         self.super_binary_op(bin_op, e1, e2)
     }
 
-    fn visit_switch(&mut self, expr: &mut Expr, values: &mut [Expr], results: &mut [Expr]) {
+    fn visit_switch(&mut self, expr: &Expr, values: &[Expr], results: &[Expr]) {
         self.super_switch(expr, values, results)
     }
 
-    fn visit_tuple(&mut self, fields: &mut [Expr]) {
+    fn visit_tuple(&mut self, fields: &[Expr]) {
         self.super_tuple(fields)
     }
 
-    fn visit_projection(&mut self, tuple: &mut Expr, index: usize) {
+    fn visit_projection(&mut self, tuple: &Expr, index: usize) {
         self.super_projection(tuple, index)
     }
 
-    fn visit_just(&mut self, expr: &mut Expr) {
+    fn visit_just(&mut self, expr: &Expr) {
         self.super_just(expr)
     }
 
-    fn super_expr(&mut self, expr: &mut Expr) {
+    fn super_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Value(e) => self.visit_value(e),
             Expr::Apply(e1, e2) => self.visit_apply(e1, e2),
@@ -46,23 +46,23 @@ pub trait Visitor {
             Expr::Uninitialized => (),
         }
     }
-    fn super_value(&mut self, _: &mut Value) {
+    fn super_value(&mut self, _: &Value) {
         ()
     }
 
-    fn super_apply(&mut self, func: &mut Expr, args: &mut [Expr]) {
+    fn super_apply(&mut self, func: &Expr, args: &[Expr]) {
         self.visit_expr(func);
         for arg in args {
             self.visit_expr(arg);
         }
     }
 
-    fn super_binary_op(&mut self, _: &mut BinOp, e1: &mut Expr, e2: &mut Expr) {
+    fn super_binary_op(&mut self, _: &BinOp, e1: &Expr, e2: &Expr) {
         self.visit_expr(e1);
         self.visit_expr(e2);
     }
 
-    fn super_switch(&mut self, expr: &mut Expr, values: &mut [Expr], results: &mut [Expr]) {
+    fn super_switch(&mut self, expr: &Expr, values: &[Expr], results: &[Expr]) {
         self.visit_expr(expr);
         for value in values {
             self.visit_expr(value);
@@ -72,17 +72,17 @@ pub trait Visitor {
         }
     }
 
-    fn super_tuple(&mut self, fields: &mut [Expr]) {
+    fn super_tuple(&mut self, fields: &[Expr]) {
         for field in fields {
             self.visit_expr(field);
         }
     }
 
-    fn super_projection(&mut self, tuple: &mut Expr, _: usize) {
+    fn super_projection(&mut self, tuple: &Expr, _: usize) {
         self.visit_expr(tuple)
     }
 
-    fn super_just(&mut self, expr: &mut Expr) {
+    fn super_just(&mut self, expr: &Expr) {
         self.visit_expr(expr)
     }
 }

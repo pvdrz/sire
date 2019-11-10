@@ -38,7 +38,7 @@ fn get_loop_start<'tcx>(
 }
 
 impl Expr {
-    pub fn find_datatype_instances(&mut self) -> Vec<Ty> {
+    pub fn find_datatype_instances(&self) -> Vec<Ty> {
         Instanced::find_types(self)
     }
 }
@@ -49,7 +49,7 @@ struct Instanced {
 }
 
 impl Instanced {
-    fn find_types(expr: &mut Expr) -> Vec<Ty> {
+    fn find_types(expr: &Expr) -> Vec<Ty> {
         let mut this = Self::default();
         this.visit_expr(expr);
         this.inner
@@ -57,7 +57,7 @@ impl Instanced {
 }
 
 impl Visitor for Instanced {
-    fn visit_expr(&mut self, expr: &mut Expr) {
+    fn visit_expr(&mut self, expr: &Expr) {
         self.super_expr(expr);
         let ty = expr.ty();
 

@@ -10,8 +10,8 @@ mod z3;
 pub fn check_equality(a: &FuncDef, b: &FuncDef) -> Result<CheckResult, Box<dyn std::error::Error>> {
     if let (Ty::Func(a_args_ty, a_params), Ty::Func(b_args_ty, b_params)) = (&a.ty, &b.ty) {
         if a_args_ty == b_args_ty && a_params == b_params {
-            let mut instances = a.body.clone().find_datatype_instances();
-            for instance in b.body.clone().find_datatype_instances() {
+            let mut instances = a.body.find_datatype_instances();
+            for instance in b.body.find_datatype_instances() {
                 if !instances.contains(&instance) {
                     instances.push(instance);
                 }
