@@ -7,7 +7,6 @@ pub enum Ty {
     Bool,
     Func(Vec<Ty>, Vec<Param>),
     Tuple(Vec<Ty>),
-    Maybe(Box<Ty>),
 }
 
 impl Ty {
@@ -23,7 +22,6 @@ impl Ty {
                 }
                 Some(total)
             }
-            Ty::Maybe(t1) => t1.bytes(),
         }
     }
 
@@ -61,8 +59,7 @@ impl Typed for Expr {
                 Expr::Tuple(ref fields) => fields.get(*i).unwrap().ty(),
                 _ => unreachable!(),
             },
-            Expr::Just(e1) => Ty::Maybe(Box::new(e1.ty())),
-            Expr::Nothing(t1) => t1.clone(),
+            Expr::Assert(_, e1) => e1.ty(),
             Expr::Uninitialized => unreachable!(),
         }
     }

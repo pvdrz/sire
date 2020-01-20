@@ -29,8 +29,8 @@ pub trait VisitorMut {
         self.super_mut_projection(tuple, index)
     }
 
-    fn visit_mut_just(&mut self, expr: &mut Expr) {
-        self.super_mut_just(expr)
+    fn visit_mut_assert(&mut self, condition: &mut Expr, result: &mut Expr) {
+        self.super_mut_assert(condition, result)
     }
 
     fn super_mut_expr(&mut self, expr: &mut Expr) {
@@ -41,8 +41,7 @@ pub trait VisitorMut {
             Expr::Switch(e1, e2, e3) => self.visit_mut_switch(e1, e2, e3),
             Expr::Tuple(e1) => self.visit_mut_tuple(e1),
             Expr::Projection(e1, index) => self.visit_mut_projection(e1, *index),
-            Expr::Just(e1) => self.visit_mut_just(e1),
-            Expr::Nothing(_) => (),
+            Expr::Assert(e1, e2) => self.visit_mut_assert(e1, e2),
             Expr::Uninitialized => (),
         }
     }
@@ -82,7 +81,8 @@ pub trait VisitorMut {
         self.visit_mut_expr(tuple)
     }
 
-    fn super_mut_just(&mut self, expr: &mut Expr) {
-        self.visit_mut_expr(expr)
+    fn super_mut_assert(&mut self, condition: &mut Expr, result: &mut Expr) {
+        self.visit_mut_expr(condition);
+        self.visit_mut_expr(result);
     }
 }

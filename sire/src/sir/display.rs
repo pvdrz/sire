@@ -27,7 +27,6 @@ impl fmt::Display for Ty {
                 "({})",
                 fields_ty.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", "),
             ),
-            Ty::Maybe(t1) => write!(f, "(Maybe {})", t1),
         }
     }
 }
@@ -84,8 +83,7 @@ impl fmt::Display for Expr {
                 fields.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "),
             ),
             Expr::Projection(e1, i) => write!(f, "(proj {} {})", e1, i),
-            Expr::Just(e1) => write!(f, "(just {})", e1),
-            Expr::Nothing(_) => write!(f, "nothing"),
+            Expr::Assert(e1, e2) => write!(f, "(assert {} {})", e1, e2),
             Expr::Uninitialized => write!(f, "uninitialized"),
         }
     }

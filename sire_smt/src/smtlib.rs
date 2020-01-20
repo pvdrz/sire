@@ -58,7 +58,6 @@ impl ToSmtlib for Ty {
                     "Unit".to_owned()
                 }
             }
-            Ty::Maybe(ty) => format!("(Maybe {})", ty.to_smtlib()),
             _ => format!("(_ BitVec {})", self.bits().unwrap()),
         }
     }
@@ -171,8 +170,8 @@ impl ToSmtlib for Expr {
                 }
                 buffer
             }
-            Expr::Just(e1) => format!("(just {})", e1.to_smtlib()),
-            Expr::Nothing(ty) => format!("(as nothing {})", ty.to_smtlib()),
+            // FIXME: Handle assertions correctly
+            Expr::Assert(_, result) => result.to_smtlib(),
             _ => unimplemented!(),
         }
     }

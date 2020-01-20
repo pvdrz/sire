@@ -62,7 +62,7 @@ impl Visitor for Instanced {
         let ty = expr.ty();
 
         match ty {
-            Ty::Tuple(_) | Ty::Maybe(_) => {
+            Ty::Tuple(_) => {
                 if !self.inner.contains(&ty) {
                     self.inner.push(ty);
                 }

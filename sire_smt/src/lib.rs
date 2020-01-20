@@ -19,7 +19,6 @@ pub fn check_equality(a: &FuncDef, b: &FuncDef) -> Result<CheckResult, Box<dyn s
             // Datatype declaration
             let mut code = vec![
                 "(declare-datatypes (T1 T2) ((Tuple (tuple (first T1) (second T2)))))".to_owned(),
-                "(declare-datatypes (T1) ((Maybe nothing (just (from-maybe T1)))))".to_owned(),
                 "(declare-datatypes () ((Unit (unit))))".to_owned(),
             ];
             // Instances of datatypes
@@ -37,6 +36,7 @@ pub fn check_equality(a: &FuncDef, b: &FuncDef) -> Result<CheckResult, Box<dyn s
                 "(check-sat)".to_owned(),
             ]);
             let code = code.join("\n");
+            println!("{}", code);
             return z3::call(&code).map(CheckResult::from_string);
         }
     }
